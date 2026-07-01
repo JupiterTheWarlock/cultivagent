@@ -13,6 +13,14 @@ It starts local-first:
 
 No prompt text, command text, file contents, or tool output is stored by default.
 
+## Hook Coverage
+
+Cultivagent can ingest any hook, plugin, extension, or OTel event that is configured to send data to `/ingest` or `/otel/*`.
+
+It does not magically monitor every hook in every agent until that agent's hook/plugin/extension is installed and trusted.
+
+Token totals are counted only from events that include usage fields, such as model response events, official OTel usage metrics, or verified adapter payloads. Plain lifecycle hooks are shown in the request log but do not add fake token usage.
+
 ## Quick Start
 
 Requires Node.js 24+.

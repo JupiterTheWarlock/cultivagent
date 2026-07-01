@@ -54,6 +54,11 @@ try {
   const agents = await get(`${base}/api/agents`);
   assert.equal(agents.agents.length, 2);
 
+  const dashboard = await text(`${base}/`);
+  assert.match(dashboard, /id="lang"/);
+  assert.match(dashboard, /data-i18n="hookType"/);
+  assert.match(dashboard, /data-i18n="machine"/);
+
   await new Promise((resolve) => setTimeout(resolve, 140));
   const pool = await get(`${base}/api/pool`);
   assert.equal(pool.events.length, 0);
@@ -87,4 +92,10 @@ async function get(url) {
   const response = await fetch(url);
   if (!response.ok) assert.fail(await response.text());
   return response.json();
+}
+
+async function text(url) {
+  const response = await fetch(url);
+  if (!response.ok) assert.fail(await response.text());
+  return response.text();
 }

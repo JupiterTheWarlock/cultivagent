@@ -18,12 +18,13 @@ for (const [agent, command, args] of checks) {
   console.log(`${agent}: ${ok ? version : "missing"}`);
   if (!ok) failed = true;
   try {
+    const event = baseEvent(agent, { type: "cli_detected", status: ok ? "ok" : "error" });
     await sendEvent({
-      ...baseEvent(agent, { type: "cli_detected", status: ok ? "ok" : "error" }),
+      ...event,
       source_surface: "cli-smoke",
       event_type: "cli_detected",
       status: ok ? "ok" : "error",
-      meta: { command, version },
+      meta: { ...event.meta, command, version },
     });
   } catch (error) {
     console.error(`ingest failed for ${agent}: ${error.message}`);

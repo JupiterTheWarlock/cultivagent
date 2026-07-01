@@ -36,6 +36,7 @@ export function baseEvent(agent, hookInput, eventType = "hook_event") {
     provider: hookInput.provider ?? "unknown",
     status: hookInput.status ?? "ok",
     meta: {
+      machine_name: hostname(),
       hook_event: hookInput.hook_event ?? hookInput.event ?? hookInput.type ?? eventType,
       tool_name: hookInput.tool_name ?? hookInput.toolName ?? "",
     },
