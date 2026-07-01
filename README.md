@@ -74,6 +74,8 @@ Authorization: Bearer change-me
 
 See [docs/INSTALL.md](docs/INSTALL.md).
 
+For Ubuntu/systemd, see [docs/UBUNTU.md](docs/UBUNTU.md).
+
 ## Status
 
 Implemented:
