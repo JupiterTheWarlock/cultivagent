@@ -1,25 +1,19 @@
 # Cultivagent
 
-Cultivagent is a small self-hosted monitor for coding-agent hooks, CLI smoke checks, and token rollups.
+Cultivagent is a small self-hosted, **pure passive** monitor for coding-agent hooks, CLI smoke checks, and token rollups.
 
-It starts local-first:
-
-- Node.js HTTP service.
-- SQLite storage through Node's built-in `node:sqlite`.
+- Node.js HTTP service (built-in `node:sqlite`).
 - In-memory TTL event pool for recent hook events.
 - Daily usage rollups.
-- Minimal dashboard at `http://127.0.0.1:3737`.
-- Adapter stubs for Codex, Claude Code, OpenCode, OpenClaw, and Pi.
+- Dashboard at `http://127.0.0.1:3737`.
+- Auth (token + login-page cookie) for remote / HTTPS deployment.
+- Plugins for Claude Code, Codex, OpenCode, Pi, OpenClaw — install via one-line installer or local marketplace.
 
-No prompt text, command text, file contents, or tool output is stored by default.
+No prompt text, command text, file contents, or tool output is stored by default. **No MCP, no agent-callable interface** — agents only `POST` hook events to `/ingest`.
 
 ## Hook Coverage
 
-Cultivagent can ingest any hook, plugin, extension, or OTel event that is configured to send data to `/ingest` or `/otel/*`.
-
-The goal is full capture: every hook observed by an installed adapter should send an event. Raw vendor hook names are then translated into canonical loop events such as `input.received`, `model.request.start`, `tool.before`, `tool.end`, `agent.end`, and `agent.idle`.
-
-Token totals are counted only from events that include usage fields, such as model response events, official OTel usage metrics, or verified adapter payloads. Plain lifecycle hooks are shown in the request log but do not add fake token usage.
+Cultivagent ingests any hook / plugin / extension / OTel event sent to `/ingest` or `/otel/*`. Each installed adapter forwards every event it observes; raw vendor hook names are translated into canonical loop events (`input.received`, `model.request.start`, `tool.before`, `tool.end`, `agent.end`, `agent.idle`). Token totals come only from events that include usage fields (model response events, OTel usage metrics, verified adapter payloads). Plain lifecycle hooks show in the request log but do not add fake token usage.
 
 See [docs/LOOP_EVENTS.md](docs/LOOP_EVENTS.md).
 
@@ -31,11 +25,7 @@ Requires Node.js 24+.
 npm start
 ```
 
-Open:
-
-```text
-http://127.0.0.1:3737
-```
+Open http://127.0.0.1:3737
 
 Run checks:
 
@@ -44,7 +34,28 @@ npm run smoke
 npm run cli-smoke
 ```
 
-`cli-smoke` detects `codex`, `claude`, and `opencode`, then sends one status event for each CLI to the running service.
+## Install Agent Plugins
+
+One-line installers per agent — write `~/.cultivagent/config.json`, clone the repo, register the plugin. Full steps in [docs/INSTALL.md](docs/INSTALL.md).
+
+| Agent | Installer |
+|---|---|
+| Claude Code | `bash <(curl -fsSL https://raw.githubusercontent.com/JupiterTheWarlock/cultivagent/main/plugins/claude-code/setup-helper/install.sh)` |
+| Codex | `bash <(curl -fsSL https://raw.githubusercontent.com/JupiterTheWarlock/cultivagent/main/plugins/codex/setup-helper/install.sh)` |
+| OpenCode | `bash <(curl -fsSL https://raw.githubusercontent.com/JupiterTheWarlock/cultivagent/main/plugins/opencode/install.sh)` |
+| Pi | `bash <(curl -fsSL https://raw.githubusercontent.com/JupiterTheWarlock/cultivagent/main/plugins/pi/install.sh)` |
+| OpenClaw | native plugin entry — [plugins/openclaw/README.md](plugins/openclaw/README.md) |
+
+## Auth
+
+Local default (`http://127.0.0.1:3737`) needs no token. For LAN / public deployment:
+
+```bash
+export CULTIVAGENT_TOKEN=$(node bin/cultivagent.mjs token)
+CULTIVAGENT_TOKEN=$CULTIVAGENT_TOKEN npm start
+```
+
+With a token set, every path except `GET /api/health` requires auth (`Authorization: Bearer <token>`, `x-cultivagent-token`, or the `cultivagent_token` cookie set by the dashboard login page).
 
 ## API
 
@@ -53,60 +64,37 @@ curl http://127.0.0.1:3737/api/health
 
 curl -X POST http://127.0.0.1:3737/ingest \
   -H 'content-type: application/json' \
+  -H "Authorization: Bearer $CULTIVAGENT_TOKEN" \
   -d '{"source_agent":"codex","event_type":"model_response","usage":{"input_tokens":10,"output_tokens":3}}'
 ```
 
-Useful endpoints:
+Endpoints: `POST /ingest`, `POST /otel/v1/logs`, `POST /otel/v1/metrics`, `GET /api/events`, `GET /api/daily`, `GET /api/agents`, `GET /api/pool`, `GET /api/usage/*`, `POST /api/login`, `POST /api/logout`.
 
-- `POST /ingest`
-- `POST /otel/v1/logs`
-- `POST /otel/v1/metrics`
-- `GET /api/events`
-- `GET /api/daily`
-- `GET /api/agents`
-- `GET /api/pool`
+## Docs
 
-## Auth
-
-For a LAN or public deployment, set a shared token:
-
-```bash
-CULTIVAGENT_TOKEN=change-me npm start
-```
-
-Clients then send:
-
-```text
-Authorization: Bearer change-me
-```
-
-## Install Guides
-
-See [docs/INSTALL.md](docs/INSTALL.md).
-
-For Ubuntu/systemd, see [docs/UBUNTU.md](docs/UBUNTU.md).
+- [Install guide](docs/INSTALL.md)
+- [Plugin spec](docs/PLUGIN_SPEC.md)
+- [Loop events](docs/LOOP_EVENTS.md)
+- [Ubuntu / systemd](docs/UBUNTU.md)
 
 ## Status
 
 Implemented:
 
-- Local SQLite service.
-- Dashboard.
-- Event normalization and dedupe.
-- Daily token rollups.
-- Recent event TTL pool.
-- Codex hook script.
-- Claude Code hook script.
-- OpenCode plugin adapter.
-- Pi extension adapter.
-- OpenClaw native plugin sketch.
-- CLI smoke events for Codex, Claude Code, and OpenCode.
+- Local SQLite service + dashboard.
+- Auth: Bearer / `x-cultivagent-token` / login-page cookie (timing-safe) + `cultivagent token` generator.
+- `~/.cultivagent/config.json` shared config (env > config > default).
+- Event normalization and dedupe; daily token rollups; recent event TTL pool.
+- Claude Code plugin (local marketplace + hooks + install.sh + `< 2.0` legacy fallback).
+- Codex plugin (copy + render-on-install, `config.toml` wiring, install.sh; no wrapper needed).
+- OpenCode / Pi plugins (adapter + install.sh).
+- OpenClaw native plugin entry (stub-grade).
+- CLI smoke events for Codex, Claude Code, OpenCode.
 
 Still intentionally fixture-gated:
 
 - OpenCode per-message token usage.
-- OpenClaw provider-specific `usage` fields.
-- Pi provider-specific assistant `message_end.usage`.
+- OpenClaw / Pi provider-specific `usage` fields.
 - Codex hook/session correlation beyond OTel.
 
 Those are not guessed. Capture raw redacted fixtures before marking adapter token accounting complete.

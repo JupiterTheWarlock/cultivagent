@@ -1,0 +1,19 @@
+{
+  "name": "cultivagent",
+  "version": "0.1.0",
+  "description": "Send Codex hook events to a self-hosted Cultivagent server for token & usage monitoring. Codex hook surface has no SessionEnd, so capture relies on Stop/PreCompact + SessionStart.",
+  "author": { "name": "cultivagent", "url": "https://github.com/JupiterTheWarlock/cultivagent" },
+  "repository": "https://github.com/JupiterTheWarlock/cultivagent",
+  "license": "MIT",
+  "keywords": ["telemetry", "tokens", "codex", "monitoring", "cultivagent"],
+  "hooks": "./hooks/hooks.json",
+  "interface": {
+    "displayName": "Cultivagent",
+    "shortDescription": "Forward Codex hook events to Cultivagent",
+    "longDescription": "Hooks Codex's lifecycle to forward events to a Cultivagent server. Codex provides no SessionEnd hook, so the plugin forwards SessionStart/UserPromptSubmit/Stop/PreCompact. For authoritative token totals, additionally point Codex OTel logs export at the server's /otel/v1/logs.",
+    "developerName": "cultivagent",
+    "category": "Productivity",
+    "capabilities": ["Hook event forwarding", "OTel usage ingest"],
+    "websiteURL": "https://github.com/JupiterTheWarlock/cultivagent"
+  }
+}

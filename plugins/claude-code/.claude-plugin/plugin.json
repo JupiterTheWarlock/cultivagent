@@ -1,0 +1,9 @@
+{
+  "name": "cultivagent",
+  "version": "0.1.0",
+  "description": "Send Claude Code hook events (SessionStart/UserPromptSubmit/Stop/PreCompact/SessionEnd) to a self-hosted Cultivagent server for token & usage monitoring. Pure passive ingest — no MCP, no agent-callable interface.",
+  "author": { "name": "cultivagent", "url": "https://github.com/JupiterTheWarlock/cultivagent" },
+  "repository": "https://github.com/JupiterTheWarlock/cultivagent",
+  "license": "MIT",
+  "keywords": ["telemetry", "tokens", "claude-code", "monitoring", "cultivagent"]
+}

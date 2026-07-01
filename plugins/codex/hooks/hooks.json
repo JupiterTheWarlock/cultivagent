@@ -1,0 +1,36 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "clear|startup|resume",
+        "hooks": [
+          { "type": "command", "command": "node __CULTIVAGENT_PLUGIN_ROOT__/scripts/hook.mjs session_start", "timeout": 10 }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "matcher": "*",
+        "hooks": [
+          { "type": "command", "command": "node __CULTIVAGENT_PLUGIN_ROOT__/scripts/hook.mjs user_prompt_submit", "timeout": 8 }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "matcher": "*",
+        "hooks": [
+          { "type": "command", "command": "node __CULTIVAGENT_PLUGIN_ROOT__/scripts/hook.mjs stop", "timeout": 10 }
+        ]
+      }
+    ],
+    "PreCompact": [
+      {
+        "matcher": "*",
+        "hooks": [
+          { "type": "command", "command": "node __CULTIVAGENT_PLUGIN_ROOT__/scripts/hook.mjs pre_compact", "timeout": 10 }
+        ]
+      }
+    ]
+  }
+}

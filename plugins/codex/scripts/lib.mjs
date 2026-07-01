@@ -1,3 +1,5 @@
+// Cultivagent plugin 共享库（codex 副本）。
+// 与仓库根 scripts/hook-lib.mjs 同源；每个 plugin 自带一份，不跨 plugin 引用。
 import { readFileSync } from "node:fs";
 import { homedir, hostname } from "node:os";
 import { join } from "node:path";

@@ -1,0 +1,13 @@
+{
+  "name": "cultivagent-plugins-local",
+  "description": "Cultivagent plugins (local development)",
+  "owner": { "name": "cultivagent" },
+  "plugins": [
+    {
+      "name": "claude-code",
+      "description": "Send Claude Code hook events to a Cultivagent server",
+      "source": "./claude-code",
+      "category": "productivity"
+    }
+  ]
+}

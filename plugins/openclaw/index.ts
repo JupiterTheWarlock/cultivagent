@@ -1,7 +1,22 @@
 import { definePluginEntry } from "openclaw/plugin-sdk/plugin-entry";
+import { readFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 
-const endpoint = process.env.CULTIVAGENT_ENDPOINT ?? "http://127.0.0.1:3737/ingest";
-const token = process.env.CULTIVAGENT_TOKEN ?? "";
+// 配置：env (CULTIVAGENT_ENDPOINT/CULTIVAGENT_TOKEN) > ~/.cultivagent/config.json > 默认本地
+function loadConfig(): Record<string, string> {
+  try {
+    return JSON.parse(readFileSync(join(homedir(), ".cultivagent", "config.json"), "utf8"));
+  } catch {
+    return {};
+  }
+}
+
+const cfg = loadConfig();
+let endpoint = process.env.CULTIVAGENT_ENDPOINT ?? cfg.endpoint ?? "http://127.0.0.1:3737";
+endpoint = endpoint.replace(/\/$/, "");
+if (!endpoint.endsWith("/ingest")) endpoint += "/ingest";
+const token = process.env.CULTIVAGENT_TOKEN ?? cfg.token ?? "";
 
 export default definePluginEntry({
   id: "cultivagent",

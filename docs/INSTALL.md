@@ -1,110 +1,10 @@
-# Cultivagent Install Notes
+# Cultivagent Install
 
-These examples assume the service is running at:
+Cultivagent is a **pure passive ingest sink**: agents forward hook events to `POST /ingest`, the server stores them and renders a dashboard. No MCP, no agent-callable interface.
 
-```text
-http://127.0.0.1:3737
-```
+## 1. Run the server
 
-Set this for all adapters:
-
-```bash
-export CULTIVAGENT_ENDPOINT=http://127.0.0.1:3737/ingest
-```
-
-If the server uses auth:
-
-```bash
-export CULTIVAGENT_TOKEN=change-me
-```
-
-## Codex
-
-Codex hooks are configured through `hooks.json` or inline `[hooks]` tables. Use the hook script for lifecycle/status events. This template wires every Codex hook event documented in the current Codex manual.
-
-Generate `~/.codex/hooks.json`:
-
-```bash
-node D:/Users/JtheWL/cultivagent/scripts/generate-hook-config.mjs codex D:/Users/JtheWL/cultivagent > ~/.codex/hooks.json
-```
-
-For token totals, prefer Codex OTel export to `POST /otel/v1/logs`. Hook events are status signals, not the source of truth for token accounting.
-
-## Claude Code
-
-Claude Code supports command and HTTP hooks. The easiest local hook is a command hook. Generate settings JSON:
-
-```bash
-node D:/Users/JtheWL/cultivagent/scripts/generate-hook-config.mjs claude D:/Users/JtheWL/cultivagent > ~/.claude/settings.json
-```
-
-For token and cost totals, configure Claude Code OpenTelemetry metrics/logs to the service:
-
-```bash
-export CLAUDE_CODE_ENABLE_TELEMETRY=1
-export OTEL_METRICS_EXPORTER=otlp
-export OTEL_LOGS_EXPORTER=otlp
-export OTEL_EXPORTER_OTLP_PROTOCOL=http/json
-export OTEL_EXPORTER_OTLP_METRICS_ENDPOINT=http://127.0.0.1:3737/otel/v1/metrics
-export OTEL_EXPORTER_OTLP_LOGS_ENDPOINT=http://127.0.0.1:3737/otel/v1/logs
-```
-
-## OpenCode
-
-Copy or reference the plugin file:
-
-```text
-adapters/opencode/cultivagent.js
-```
-
-Global or project `opencode.json`:
-
-```json
-{
-  "$schema": "https://opencode.ai/config.json",
-  "plugin": ["./adapters/opencode/cultivagent.js"]
-}
-```
-
-For token totals, the first verified source is:
-
-```bash
-opencode stats --days 1 --models 10
-```
-
-Per-message plugin token fields must be fixture-captured before being treated as authoritative.
-
-## Pi
-
-Load the extension directly while testing:
-
-```bash
-pi -e D:/Users/JtheWL/cultivagent/adapters/pi/cultivagent.js
-```
-
-Or create a Pi package that declares:
-
-```json
-{
-  "pi": {
-    "extensions": ["./adapters/pi/cultivagent.js"]
-  }
-}
-```
-
-Pi examples show `message_end` usage on assistant messages. Provider coverage should be verified with fixtures.
-
-## OpenClaw
-
-Use the native plugin surface for runtime lifecycle and model usage events:
-
-```text
-adapters/openclaw/index.ts
-```
-
-OpenClaw internal `HOOK.md` scripts are better for coarse command/Gateway events. Typed native plugin hooks are the right target for token/usage observation.
-
-## Ubuntu Deployment
+Requires Node.js 24+.
 
 ```bash
 git clone https://github.com/JupiterTheWarlock/cultivagent.git
@@ -112,4 +12,85 @@ cd cultivagent
 npm start
 ```
 
-For a long-running service, put it behind systemd, Caddy, Nginx, or Cloudflare Tunnel.
+Dashboard: http://127.0.0.1:3737
+
+### Remote / authenticated deployment
+
+For VPS / Cloudflare, generate a token and require auth:
+
+```bash
+export CULTIVAGENT_TOKEN=$(node bin/cultivagent.mjs token)
+HOST=0.0.0.0 CULTIVAGENT_TOKEN=$CULTIVAGENT_TOKEN npm start
+```
+
+With a token set, every path except `GET /api/health` requires auth. Three forms accepted:
+
+- `Authorization: Bearer <token>` — agent hooks
+- `x-cultivagent-token: <token>` — alternate header
+- cookie `cultivagent_token` — browser dashboard (visit `/`, enter token on the login page; cookie is HttpOnly/Secure/SameSite=Lax, 30 days)
+
+See [docs/UBUNTU.md](UBUNTU.md) for systemd / reverse-proxy deployment.
+
+## 2. Install an agent plugin
+
+Each agent has a one-line installer that writes `~/.cultivagent/config.json` (endpoint + token), clones the repo, and registers the plugin. Re-running is safe (idempotent). Non-interactive when piped (`curl | bash`) — uses env / existing config / defaults.
+
+> Windows: run the installers under **git-bash** (the bash from Git for Windows).
+
+### Claude Code
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/JupiterTheWarlock/cultivagent/main/plugins/claude-code/setup-helper/install.sh)
+```
+
+Manual: `claude plugin marketplace add <repo>/plugins` → `claude plugin install claude-code@cultivagent-plugins-local`. See [plugins/claude-code/README.md](../plugins/claude-code/README.md).
+
+### Codex
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/JupiterTheWarlock/cultivagent/main/plugins/codex/setup-helper/install.sh)
+```
+
+Codex 0.130 does not inject a plugin-root env var, so the installer copies the plugin and renders `__CULTIVAGENT_PLUGIN_ROOT__` into an absolute path. See [plugins/codex/README.md](../plugins/codex/README.md). For authoritative token totals, also export Codex OTel:
+
+```bash
+export OTEL_EXPORTER_OTLP_LOGS_ENDPOINT=https://your-server/otel/v1/logs
+export OTEL_EXPORTER_OTLP_PROTOCOL=http/json
+```
+
+### OpenCode
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/JupiterTheWarlock/cultivagent/main/plugins/opencode/install.sh)
+```
+
+Appends the plugin path to `~/.config/opencode/opencode.json`. See [plugins/opencode/README.md](../plugins/opencode/README.md).
+
+### Pi
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/JupiterTheWarlock/cultivagent/main/plugins/pi/install.sh)
+```
+
+Adds a `pi()` shell wrapper (or use `pi -e <file>` / package.json `pi.extensions`). See [plugins/pi/README.md](../plugins/pi/README.md).
+
+### OpenClaw
+
+Native plugin entry (TypeScript, build required). See [plugins/openclaw/README.md](../plugins/openclaw/README.md).
+
+## 3. Config priority
+
+All plugins resolve endpoint/token as: env (`CULTIVAGENT_ENDPOINT` / `CULTIVAGENT_TOKEN`) > `~/.cultivagent/config.json` > `http://127.0.0.1:3737` (no token).
+
+## API
+
+```bash
+curl http://127.0.0.1:3737/api/health
+
+curl -X POST http://127.0.0.1:3737/ingest \
+  -H 'content-type: application/json' \
+  -H "Authorization: Bearer $CULTIVAGENT_TOKEN" \
+  -d '{"source_agent":"codex","event_type":"model_response","usage":{"input_tokens":10,"output_tokens":3}}'
+```
+
+Endpoints: `POST /ingest`, `POST /otel/v1/logs`, `POST /otel/v1/metrics`, `GET /api/events`, `GET /api/daily`, `GET /api/agents`, `GET /api/pool`, `GET /api/usage/*`, `POST /api/login`, `POST /api/logout`.

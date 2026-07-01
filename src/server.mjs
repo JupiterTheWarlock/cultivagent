@@ -16,6 +16,7 @@ import {
   resetDatabase,
 } from "./db.mjs";
 import { normalizeEvent, normalizeOtelLogs, normalizeOtelMetrics } from "./normalize.mjs";
+import { isAuthorized, handleLogin, handleLogout, loginPageHtml } from "./auth.mjs";
 
 export function createCultivagentServer(options = {}) {
   const db = options.db ?? openDatabase(options.dbPath);
@@ -25,13 +26,23 @@ export function createCultivagentServer(options = {}) {
 
   const server = createServer(async (req, res) => {
     try {
-      if (token && isWrite(req) && !isAuthorized(req, token)) {
+      const url = new URL(req.url, "http://localhost");
+
+      // 公开白名单：token 非空时也放行（探活 + 登录流程）
+      if (req.method === "GET" && url.pathname === "/api/health") return json(res, 200, { ok: true });
+      if (req.method === "POST" && url.pathname === "/api/login") return await handleLogin(req, res, token);
+      if (req.method === "POST" && url.pathname === "/api/logout") return handleLogout(res);
+
+      // dashboard：已登录（或本地无 token）返回 dashboard，否则返回登录页
+      if (req.method === "GET" && (url.pathname === "/" || url.pathname === "/index.html")) {
+        return html(res, isAuthorized(req, token) ? dashboardHtml() : loginPageHtml());
+      }
+
+      // 其余所有路径：token 非空时强制 auth（含 GET，堵住 /api/* 裸奔）
+      if (!isAuthorized(req, token)) {
         return json(res, 401, { error: "unauthorized" });
       }
 
-      const url = new URL(req.url, "http://localhost");
-      if (req.method === "GET" && url.pathname === "/") return html(res, dashboardHtml());
-      if (req.method === "GET" && url.pathname === "/api/health") return json(res, 200, { ok: true });
       if (req.method === "GET" && url.pathname === "/api/events") {
         return json(res, 200, { events: listEvents(db, url.searchParams.get("limit")) });
       }
@@ -93,6 +104,8 @@ export function createCultivagentServer(options = {}) {
       }
       return json(res, 404, { error: "not_found" });
     } catch (error) {
+      // malformed request body → 400（而非 500）
+      if (error instanceof SyntaxError) return json(res, 400, { error: "invalid_json" });
       return json(res, 500, { error: error.message });
     }
   });
@@ -148,14 +161,6 @@ function dateParam(value) {
 
 function emptyToUndefined(value) {
   return value == null || value === "" || value === "all" ? undefined : value;
-}
-
-function isWrite(req) {
-  return req.method !== "GET" && req.method !== "HEAD";
-}
-
-function isAuthorized(req, token) {
-  return req.headers.authorization === `Bearer ${token}` || req.headers["x-cultivagent-token"] === token;
 }
 
 async function readJson(req) {

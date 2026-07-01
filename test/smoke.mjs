@@ -1,8 +1,7 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { hostname, tmpdir } from "node:os";
 import { join } from "node:path";
-import { spawnSync } from "node:child_process";
 import { createCultivagentServer } from "../src/server.mjs";
 import { translateLoopEvent } from "../src/normalize.mjs";
 
@@ -122,10 +121,14 @@ try {
   assert.equal(translateLoopEvent("pi", "before_provider_request").agent_status, "thinking");
   assert.equal(translateLoopEvent("openclaw", "subagent_spawned").agent_status, "delegating");
 
-  const codexHooks = generatedHooks("codex");
-  assert.equal(codexHooks.hooks.PreToolUse[0].hooks[0].command.includes("PreToolUse"), true);
-  const claudeHooks = generatedHooks("claude");
-  assert.equal(claudeHooks.hooks.MessageDisplay[0].hooks[0].command.includes("MessageDisplay"), true);
+  // plugin hooks.json 合法性（取代已移除的 generate-hook-config 测试）
+  const claudeHooks = JSON.parse(readFileSync(new URL("../plugins/claude-code/hooks/hooks.json", import.meta.url), "utf8"));
+  assert.ok(claudeHooks.hooks.SessionStart, "claude-code hooks.json missing SessionStart");
+  assert.ok(claudeHooks.hooks.SessionEnd, "claude-code hooks.json missing SessionEnd");
+  assert.match(claudeHooks.hooks.SessionStart[0].hooks[0].command, /\$\{CLAUDE_PLUGIN_ROOT\}/);
+  const codexHooks = JSON.parse(readFileSync(new URL("../plugins/codex/hooks/hooks.json", import.meta.url), "utf8"));
+  assert.ok(codexHooks.hooks.Stop, "codex hooks.json missing Stop");
+  assert.match(codexHooks.hooks.Stop[0].hooks[0].command, /__CULTIVAGENT_PLUGIN_ROOT__/);
 
   const agents = await get(`${base}/api/agents`);
   assert.equal(agents.agents.length, 2);
@@ -181,13 +184,4 @@ async function text(url) {
   const response = await fetch(url);
   if (!response.ok) assert.fail(await response.text());
   return response.text();
-}
-
-function generatedHooks(agent) {
-  const result = spawnSync(process.execPath, ["./scripts/generate-hook-config.mjs", agent, process.cwd()], {
-    cwd: process.cwd(),
-    encoding: "utf8",
-  });
-  assert.equal(result.status, 0, result.stderr);
-  return JSON.parse(result.stdout);
 }

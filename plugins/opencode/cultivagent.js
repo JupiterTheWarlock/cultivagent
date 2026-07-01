@@ -1,5 +1,22 @@
-const endpoint = process.env.CULTIVAGENT_ENDPOINT ?? "http://127.0.0.1:3737/ingest";
-const token = process.env.CULTIVAGENT_TOKEN ?? "";
+// Cultivagent plugin for OpenCode. Forwards opencode events to POST /ingest.
+// 配置：env (CULTIVAGENT_ENDPOINT/CULTIVAGENT_TOKEN) > ~/.cultivagent/config.json > 默认本地。
+import { readFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
+
+function loadConfig() {
+  try {
+    return JSON.parse(readFileSync(join(homedir(), ".cultivagent", "config.json"), "utf8"));
+  } catch {
+    return {};
+  }
+}
+
+const cfg = loadConfig();
+let endpoint = process.env.CULTIVAGENT_ENDPOINT ?? cfg.endpoint ?? "http://127.0.0.1:3737";
+endpoint = endpoint.replace(/\/$/, "");
+if (!endpoint.endsWith("/ingest")) endpoint += "/ingest";
+const token = process.env.CULTIVAGENT_TOKEN ?? cfg.token ?? "";
 
 export const Cultivagent = async ({ project, directory, worktree }) => {
   return {

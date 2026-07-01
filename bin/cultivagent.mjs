@@ -1,6 +1,13 @@
 #!/usr/bin/env node
+import { randomBytes } from "node:crypto";
 import { resolve } from "node:path";
 import { createCultivagentServer } from "../src/server.mjs";
+
+// cultivagent token —— 生成 32 字节 hex token，用于 CULTIVAGENT_TOKEN 配置
+if (process.argv[2] === "token") {
+  process.stdout.write(`${randomBytes(32).toString("hex")}\n`);
+  process.exit(0);
+}
 
 const args = new Map();
 for (let i = 2; i < process.argv.length; i += 2) {
