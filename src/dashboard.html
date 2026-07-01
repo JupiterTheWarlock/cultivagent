@@ -431,18 +431,16 @@
     .bad { color: var(--destructive); font-weight: 750; }
     .pill { display: inline-flex; align-items: center; min-height: 24px; border-radius: 8px; background: rgba(148, 163, 184, 0.14); color: #dbe4ef; padding: 3px 8px; }
     .two-col { display: grid; grid-template-columns: 1fr; gap: 16px; }
-    .request-dashboard { display: grid; gap: 18px; }
-    .request-toolbar { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
-    .request-select {
-      height: 36px;
-      border-radius: 8px;
-      border: 1px solid var(--border);
-      background: var(--background);
-      color: var(--foreground);
-      padding: 0 10px;
-      font-size: 12px;
-      font-weight: 650;
+    /* 全局过滤栏：使用/请求两面板共享（应用、刷新、日期范围） */
+    .global-toolbar {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 20px;
     }
+    .global-toolbar .app-filter { margin-right: auto; }
+    .request-dashboard { display: grid; gap: 32px; padding-bottom: 32px; }
 
     @media (min-width: 860px) {
       .usage-head { flex-direction: row; align-items: flex-end; justify-content: space-between; }
@@ -450,12 +448,17 @@
       .hero-top { flex-direction: row; align-items: center; }
       .mini-grid { grid-template-columns: repeat(5, minmax(0, 1fr)); }
       .hit-card { grid-column: span 1; }
+      .request-dashboard .mini-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
       .two-col { grid-template-columns: 1fr 1fr; }
     }
     @media (max-width: 700px) {
       .shell { padding: 16px 12px 28px; }
       .topbar { align-items: flex-start; flex-direction: column; }
       .top-actions { width: 100%; justify-content: space-between; }
+      .global-toolbar { align-items: stretch; }
+      .global-toolbar .app-filter { width: 100%; margin-right: 0; justify-content: space-between; }
+      .global-toolbar .select-wrap, .global-toolbar .date-wrap { flex: 1 1 112px; }
+      .global-toolbar .select-trigger, .global-toolbar .date-trigger { width: 100%; }
       .usage-toolbar { align-items: stretch; }
       .app-filter { width: 100%; justify-content: space-between; }
       .select-trigger, .date-trigger { width: 100%; }
@@ -488,6 +491,31 @@
       </div>
     </div>
 
+    <!-- 全局过滤栏：使用/请求两面板共享（应用、刷新、日期范围） -->
+    <div class="global-toolbar">
+      <div class="app-filter" id="appFilter" aria-label="应用筛选"></div>
+
+      <div class="select-wrap" id="refreshSelect">
+        <button class="select-trigger" type="button" title="自动刷新间隔" aria-label="自动刷新间隔">
+          <span class="select-inline">
+            <span data-icon="refresh-cw"></span>
+            <span id="refreshLabel">30s</span>
+          </span>
+          <span class="chevron" data-icon="chevron-down"></span>
+        </button>
+        <div class="select-menu" role="listbox"></div>
+      </div>
+
+      <div class="date-wrap" id="datePicker">
+        <button class="date-trigger" id="dateTrigger" type="button" title="当天">
+          <span data-icon="calendar-days"></span>
+          <span class="date-label truncate" id="rangeLabel">当天</span>
+          <span class="chevron" data-icon="chevron-down"></span>
+        </button>
+        <div class="date-popover hidden" id="datePopover"></div>
+      </div>
+    </div>
+
     <section id="usageView" class="usage-dashboard">
       <div class="usage-head">
         <div class="usage-heading">
@@ -496,8 +524,6 @@
         </div>
 
         <div class="usage-toolbar">
-          <div class="app-filter" id="appFilter" aria-label="应用筛选"></div>
-
           <div class="select-wrap" id="providerSelect">
             <button class="select-trigger" type="button" title="按来源筛选" aria-label="按来源筛选">
               <span class="truncate select-label">全部来源</span>
@@ -512,26 +538,6 @@
               <span class="chevron" data-icon="chevron-down"></span>
             </button>
             <div class="select-menu" role="listbox"></div>
-          </div>
-
-          <div class="select-wrap" id="refreshSelect">
-            <button class="select-trigger" type="button" title="自动刷新间隔" aria-label="自动刷新间隔">
-              <span class="select-inline">
-                <span data-icon="refresh-cw"></span>
-                <span id="refreshLabel">30s</span>
-              </span>
-              <span class="chevron" data-icon="chevron-down"></span>
-            </button>
-            <div class="select-menu" role="listbox"></div>
-          </div>
-
-          <div class="date-wrap" id="datePicker">
-            <button class="date-trigger" id="dateTrigger" type="button" title="当天">
-              <span data-icon="calendar-days"></span>
-              <span class="date-label truncate" id="rangeLabel">当天</span>
-              <span class="chevron" data-icon="chevron-down"></span>
-            </button>
-            <div class="date-popover hidden" id="datePopover"></div>
           </div>
         </div>
       </div>
@@ -644,31 +650,67 @@
     </section>
 
     <section id="requestView" class="request-dashboard hidden">
-      <section class="glass-card">
-        <div class="card-content">
-          <div class="usage-heading">
-            <h2>请求统计</h2>
-            <p>查看全量 Agent Hook 请求</p>
+      <div class="usage-head">
+        <div class="usage-heading">
+          <h2>请求统计</h2>
+          <p>查看全量 Agent Hook 请求</p>
+        </div>
+
+        <div class="usage-toolbar">
+          <div class="select-wrap" id="hookSelect">
+            <button class="select-trigger" type="button" title="按 Hook 类型筛选" aria-label="按 Hook 类型筛选">
+              <span class="truncate select-label">全部 Hook</span>
+              <span class="chevron" data-icon="chevron-down"></span>
+            </button>
+            <div class="select-menu" role="listbox"></div>
           </div>
-          <div class="request-toolbar">
-            <select id="hookFilter" class="request-select" aria-label="Hook 类型"></select>
-            <select id="machineFilter" class="request-select" aria-label="机器名"></select>
+
+          <div class="select-wrap" id="machineSelect">
+            <button class="select-trigger" type="button" title="按机器筛选" aria-label="按机器筛选">
+              <span class="truncate select-label">全部机器</span>
+              <span class="chevron" data-icon="chevron-down"></span>
+            </button>
+            <div class="select-menu" role="listbox"></div>
           </div>
         </div>
-      </section>
+      </div>
 
       <section class="glass-card">
         <div class="card-content">
-          <div class="hero-top">
-            <div class="hero-title">
-              <div class="title-icon"><span data-icon="list-filter"></span></div>
-              <div>
-                <div class="metric-kicker">请求统计</div>
-                <div class="big-number-row"><span class="big-number" id="requestTotal">0</span></div>
+          <div class="hero-grid">
+            <div class="hero-top">
+              <div class="hero-title">
+                <div id="requestHeroIcon" class="title-icon"></div>
+                <div>
+                  <div class="metric-kicker" id="requestHeroKicker">请求总数</div>
+                  <div class="big-number-row">
+                    <span class="big-number" id="requestTotal">0</span>
+                    <span class="short-badge" id="requestTotalShort">≈ 0</span>
+                  </div>
+                </div>
+              </div>
+
+              <div class="summary-chip">
+                <div class="summary-item">
+                  <span class="summary-label">日均请求</span>
+                  <span class="summary-value"><span data-icon="activity"></span><span id="requestDailyAvg">0</span></span>
+                </div>
               </div>
             </div>
-            <div class="summary-chip">
-              <div class="summary-item"><span class="summary-label">Agent / 机器 / Hook</span><span class="summary-value" id="requestBreakdown">0 / 0 / 0</span></div>
+
+            <div class="mini-grid">
+              <div class="mini-stat">
+                <div class="mini-label"><span class="mini-icon blue" data-icon="activity"></span><span>Agent 数</span></div>
+                <div class="mini-value" id="requestAgents">0</div>
+              </div>
+              <div class="mini-stat">
+                <div class="mini-label"><span class="mini-icon purple" data-icon="database"></span><span>机器数</span></div>
+                <div class="mini-value" id="requestMachines">0</div>
+              </div>
+              <div class="mini-stat">
+                <div class="mini-label"><span class="mini-icon amber" data-icon="list-filter"></span><span>Hook 类型</span></div>
+                <div class="mini-value" id="requestHookTypes">0</div>
+              </div>
             </div>
           </div>
         </div>
@@ -678,39 +720,47 @@
         <div class="card-content">
           <div class="chart-head">
             <h3>请求趋势</h3>
-            <div class="legend"><span class="legend-item"><span class="legend-dot" style="background: var(--primary)"></span>请求数</span></div>
+            <div class="health" id="requestRangeText">当天</div>
           </div>
-          <svg id="requestChart" class="chart-svg" viewBox="0 0 1000 300" role="img" aria-label="request trend"></svg>
+          <div class="chart-frame" id="requestChartFrame">
+            <svg id="requestChart" class="chart-svg" viewBox="0 0 1000 300" role="img" aria-label="request trend"></svg>
+            <div class="chart-tooltip" id="requestChartTooltip"></div>
+            <div class="legend">
+              <span class="legend-item"><span class="legend-dot" style="background: var(--primary)"></span>请求数</span>
+            </div>
+          </div>
         </div>
-      </section>
-
-      <section class="two-col">
-        <div class="glass-card"><div class="card-content">
-          <div class="chart-head"><h3>Hook 类型</h3></div>
-          <div class="table-wrap"><table>
-            <thead><tr><th data-i18n="hookType">Hook 类型</th><th>请求数</th></tr></thead>
-            <tbody id="hookRows"></tbody>
-          </table></div>
-        </div></div>
-        <div class="glass-card"><div class="card-content">
-          <div class="chart-head"><h3>机器</h3></div>
-          <div class="table-wrap"><table>
-            <thead><tr><th data-i18n="machine">机器名</th><th>请求数</th></tr></thead>
-            <tbody id="machineRows"></tbody>
-          </table></div>
-        </div></div>
       </section>
 
       <section class="glass-card">
         <div class="card-content">
           <div class="tabs-head">
-            <h3>请求日志</h3>
+            <div class="tabs-list" role="tablist" aria-label="Request table tabs">
+              <button class="tab-trigger" type="button" data-rtab="logs"><span data-icon="activity"></span>请求日志</button>
+              <button class="tab-trigger" type="button" data-rtab="machines"><span data-icon="database"></span>机器</button>
+              <button class="tab-trigger" type="button" data-rtab="hooks"><span data-icon="list-filter"></span>Hook 类型</button>
+            </div>
             <span class="health" id="requestTotalRecords">0</span>
           </div>
-          <div class="table-wrap"><table>
-            <thead><tr><th>时间</th><th>Agent</th><th data-i18n="machine">机器名</th><th data-i18n="hookType">Hook 类型</th></tr></thead>
-            <tbody id="requestRows"></tbody>
-          </table></div>
+
+          <div id="requestLogsPanel" class="request-panel">
+            <div class="table-wrap"><table>
+              <thead><tr><th>时间</th><th>Agent</th><th data-i18n="machine">机器名</th><th data-i18n="hookType">Hook 类型</th></tr></thead>
+              <tbody id="requestRows"></tbody>
+            </table></div>
+          </div>
+          <div id="requestMachinesPanel" class="request-panel hidden">
+            <div class="table-wrap"><table>
+              <thead><tr><th data-i18n="machine">机器名</th><th>请求数</th><th>占比</th></tr></thead>
+              <tbody id="machineRows"></tbody>
+            </table></div>
+          </div>
+          <div id="requestHooksPanel" class="request-panel hidden">
+            <div class="table-wrap"><table>
+              <thead><tr><th data-i18n="hookType">Hook 类型</th><th>请求数</th><th>占比</th></tr></thead>
+              <tbody id="hookRows"></tbody>
+            </table></div>
+          </div>
         </div>
       </section>
     </section>
@@ -753,8 +803,8 @@
     const PRESETS = ['today', '1d', '7d', '14d', '30d'];
     const PRESET_LABELS = { today: '当天', '1d': '1d', '7d': '7d', '14d': '14d', '30d': '30d', custom: '日历筛选' };
     const i18n = {
-      zh: { allSources: '全部来源', allModels: '全部模型', filterBySource: '按来源筛选', filterByModel: '按模型筛选', refreshOff: '关闭', customRangeHint: '支持日期与时间', startTime: '开始时间', endTime: '结束时间', liveEndTime: '结束时间跟随当前时刻', cancel: '取消', confirm: '确认', noData: '暂无数据', now: '现在' },
-      en: { allSources: 'All Sources', allModels: 'All Models', filterBySource: 'Filter by source', filterByModel: 'Filter by model', refreshOff: 'Off', customRangeHint: 'Supports date and time', startTime: 'Start Time', endTime: 'End Time', liveEndTime: 'End time follows now', cancel: 'Cancel', confirm: 'Confirm', noData: 'No data', now: 'Now' }
+      zh: { allSources: '全部来源', allModels: '全部模型', allHooks: '全部 Hook', allMachines: '全部机器', filterBySource: '按来源筛选', filterByModel: '按模型筛选', filterByHook: '按 Hook 类型筛选', filterByMachine: '按机器筛选', refreshOff: '关闭', customRangeHint: '支持日期与时间', startTime: '开始时间', endTime: '结束时间', liveEndTime: '结束时间跟随当前时刻', cancel: '取消', confirm: '确认', noData: '暂无数据', now: '现在' },
+      en: { allSources: 'All Sources', allModels: 'All Models', allHooks: 'All Hooks', allMachines: 'All Machines', filterBySource: 'Filter by source', filterByModel: 'Filter by model', filterByHook: 'Filter by hook type', filterByMachine: 'Filter by machine', refreshOff: 'Off', customRangeHint: 'Supports date and time', startTime: 'Start Time', endTime: 'End Time', liveEndTime: 'End time follows now', cancel: 'Cancel', confirm: 'Confirm', noData: 'No data', now: 'Now' }
     };
     const state = {
       lang: localStorage.getItem('cultivagent_lang') || 'zh',
@@ -762,8 +812,11 @@
       appType: 'all',
       provider: undefined,
       model: undefined,
+      hookType: undefined,
+      machine: undefined,
       refreshMs: 30000,
       usageTab: 'logs',
+      requestTab: 'logs',
       timer: null,
       range: { preset: 'today' },
       draft: null
@@ -818,8 +871,14 @@
         state.model = value;
         refresh();
       });
-      fillNativeSelect('hookFilter', 'Hook 类型', requestStats.by_hook_type.map((x) => x.hook_type));
-      fillNativeSelect('machineFilter', '机器名', requestStats.by_machine.map((x) => x.machine));
+      renderUsageSelect('hookSelect', state.hookType, requestStats.by_hook_type.map((x) => x.hook_type), dict('allHooks'), dict('filterByHook'), (value) => {
+        state.hookType = value;
+        refresh();
+      });
+      renderUsageSelect('machineSelect', state.machine, requestStats.by_machine.map((x) => x.machine), dict('allMachines'), dict('filterByMachine'), (value) => {
+        state.machine = value;
+        refresh();
+      });
       renderUsage(summary.summary, trends.trends, providers.providers, models.models, logs.logs);
       renderRequests(requestStats);
       updateVisibility();
@@ -875,7 +934,9 @@
     }
 
     function fillNativeSelect(id, label, values) {
+      // 请求面板已改用自定义下拉（renderUsageSelect），此函数保留以兼容潜在调用
       const el = document.getElementById(id);
+      if (!el) return;
       const old = el.value;
       const unique = Array.from(new Set(values.filter(Boolean))).sort();
       el.innerHTML = '<option value="">' + esc(label) + '</option>' + unique.map((value) => '<option value="' + escAttr(value) + '">' + esc(value) + '</option>').join('');
@@ -909,13 +970,34 @@
     }
 
     function renderRequests(stats) {
-      document.getElementById('requestTotal').textContent = nf().format(stats.summary.total_requests || 0);
-      document.getElementById('requestBreakdown').textContent = [stats.summary.agents || 0, stats.summary.machines || 0, stats.summary.hook_types || 0].join(' / ');
-      document.getElementById('requestTotalRecords').textContent = nf().format(stats.summary.total_requests || 0);
-      drawChart('requestChart', stats.trend, [['request_count', 'request-line']]);
+      const app = APP_FILTER_OPTIONS.find((x) => x.type === state.appType) || APP_FILTER_OPTIONS[0];
+      const total = stats.summary.total_requests || 0;
+
+      // Hero：title-icon 按 appType 动态变色（对齐使用面板）
+      const heroIcon = document.getElementById('requestHeroIcon');
+      heroIcon.className = 'title-icon ' + (state.appType === 'all' ? '' : state.appType);
+      heroIcon.innerHTML = state.appType === 'all' ? icon('list-filter') : app.icon;
+      document.getElementById('requestHeroKicker').innerHTML = state.appType === 'all'
+        ? '请求总数'
+        : '<span class="app-label ' + escAttr(state.appType) + '">' + esc(app.label) + '</span><span class="dot">•</span><span>请求总数</span>';
+      document.getElementById('requestTotal').textContent = nf().format(total);
+      document.getElementById('requestTotalShort').textContent = '≈ ' + shortTokens(total);
+
+      // summary-chip：日均请求
+      const resolved = resolveRange(state.range);
+      const days = Math.max(1, (resolved.endDate - resolved.startDate) / 86400);
+      document.getElementById('requestDailyAvg').textContent = nf().format(Math.round(total / days));
+
+      // mini-grid：Agent / 机器 / Hook 类型
+      document.getElementById('requestAgents').textContent = nf().format(stats.summary.agents || 0);
+      document.getElementById('requestMachines').textContent = nf().format(stats.summary.machines || 0);
+      document.getElementById('requestHookTypes').textContent = nf().format(stats.summary.hook_types || 0);
+
+      document.getElementById('requestTotalRecords').textContent = nf().format(total);
+      drawRequestChart(stats.trend);
       document.getElementById('requestRows').innerHTML = stats.requests.length ? stats.requests.map(requestRow).join('') : emptyRow(4);
-      document.getElementById('hookRows').innerHTML = stats.by_hook_type.length ? stats.by_hook_type.map((x) => countRow(x.hook_type, x.count)).join('') : emptyRow(2);
-      document.getElementById('machineRows').innerHTML = stats.by_machine.length ? stats.by_machine.map((x) => countRow(x.machine, x.count)).join('') : emptyRow(2);
+      document.getElementById('hookRows').innerHTML = stats.by_hook_type.length ? stats.by_hook_type.map((x) => countRowWithRate(x.hook_type, x.count, total)).join('') : emptyRow(3);
+      document.getElementById('machineRows').innerHTML = stats.by_machine.length ? stats.by_machine.map((x) => countRowWithRate(x.machine, x.count, total)).join('') : emptyRow(3);
     }
 
     function usageLogRow(log) {
@@ -939,6 +1021,11 @@
       return '<tr><td>' + esc(label) + '</td><td>' + nf().format(count || 0) + '</td></tr>';
     }
 
+    function countRowWithRate(label, count, total) {
+      const rate = total > 0 ? ((count / total) * 100).toFixed(1) + '%' : '0%';
+      return '<tr><td>' + esc(label) + '</td><td>' + nf().format(count || 0) + '</td><td>' + rate + '</td></tr>';
+    }
+
     function emptyRow(cols) {
       return '<tr><td colspan="' + cols + '" class="muted">' + esc(dict('noData')) + '</td></tr>';
     }
@@ -956,10 +1043,8 @@
       const params = rangeParams();
       const app = APP_FILTER_OPTIONS.find((x) => x.type === state.appType);
       if (app?.agent) params.set('agent', app.agent);
-      const hook = document.getElementById('hookFilter').value;
-      const machine = document.getElementById('machineFilter').value;
-      if (hook) params.set('hook_type', hook);
-      if (machine) params.set('machine', machine);
+      if (state.hookType) params.set('hook_type', state.hookType);
+      if (state.machine) params.set('machine', state.machine);
       return params;
     }
 
@@ -1366,27 +1451,71 @@
       return Number.isFinite(n) ? '$' + n.toFixed(digits) : '--';
     }
 
-    function drawChart(id, rows, series) {
-      const svg = document.getElementById(id);
-      const data = rows && rows.length ? rows : [{ time: '', request_count: 0 }];
-      const max = Math.max(1, ...data.flatMap((row) => series.map(([key]) => Number(row[key] || 0))));
-      const plot = ([key, cls]) => '<path class="line ' + cls + '" d="' + data.map((row, i) => point(i, row[key], data.length, max)).join(' ') + '"/>';
-      svg.innerHTML = grid(max) + series.map(plot).join('') + data.map((row, i) => i % Math.ceil(data.length / 6) === 0 ? '<text class="tick" x="' + (70 + i * (860 / Math.max(1, data.length - 1))) + '" y="292" text-anchor="middle">' + esc(timeLabel(row.time)) + '</text>' : '').join('');
+    // 请求趋势图：复用使用面板的绘图坐标系（平滑曲线 / 区域填充 / hover tooltip / 自适应 X 轴）
+    function drawRequestChart(rows) {
+      const svg = document.getElementById('requestChart');
+      const tooltip = document.getElementById('requestChartTooltip');
+      const data = (rows && rows.length ? rows : [{ time: '', request_count: 0 }]).map((row) => ({
+        time: row.time,
+        label: trendLabel(row.time),
+        request_count: Number(row.request_count || 0),
+      }));
+      const plot = { left: 70, right: 930, top: 25, bottom: 252 };
+      const max = niceMax(Math.max(1, ...data.map((row) => row.request_count)));
+      const xFor = (i) => plot.left + i * ((plot.right - plot.left) / Math.max(1, data.length - 1));
+      const yFor = (value) => plot.bottom - (Number(value || 0) / (max || 1)) * (plot.bottom - plot.top);
+      const color = '#38bdf8';
+      const points = data.map((row, i) => ({ x: xFor(i), y: yFor(row.request_count) }));
+
+      let html = requestGrid(plot, max);
+      html += '<path class="area" fill="' + color + '" d="' + areaPath(points, plot.bottom) + '"/>';
+      html += '<path class="line request-line" d="' + smoothPath(points) + '"/>';
+      html += '<g id="requestHoverGroup"></g><rect x="' + plot.left + '" y="' + plot.top + '" width="' + (plot.right - plot.left) + '" height="' + (plot.bottom - plot.top) + '" fill="transparent" style="pointer-events:all"/>';
+      svg.innerHTML = html;
+      document.getElementById('requestRangeText').textContent = rangeLabel();
+
+      svg.onmousemove = (event) => {
+        const rect = svg.getBoundingClientRect();
+        const x = ((event.clientX - rect.left) / rect.width) * 1000;
+        const index = Math.max(0, Math.min(data.length - 1, Math.round((x - plot.left) / ((plot.right - plot.left) / Math.max(1, data.length - 1)))));
+        showRequestHover(index, data, plot, xFor, yFor, color, tooltip, svg);
+      };
+      svg.onmouseleave = () => {
+        const g = svg.querySelector('#requestHoverGroup');
+        if (g) g.innerHTML = '';
+        tooltip.style.display = 'none';
+      };
     }
 
-    function point(i, value, count, max) {
-      const x = 70 + i * (860 / Math.max(1, count - 1));
-      const y = 252 - (Number(value || 0) / max) * 205;
-      return (i ? 'L' : 'M') + x.toFixed(1) + ' ' + y.toFixed(1);
+    function showRequestHover(index, data, plot, xFor, yFor, color, tooltip, svg) {
+      const row = data[index];
+      const x = xFor(index);
+      const y = yFor(row.request_count);
+      const group = svg.querySelector('#requestHoverGroup');
+      if (group) group.innerHTML = '<line class="hover-line" x1="' + x.toFixed(1) + '" y1="' + plot.top + '" x2="' + x.toFixed(1) + '" y2="' + plot.bottom + '"/>' +
+        '<circle class="hover-dot" cx="' + x.toFixed(1) + '" cy="' + y.toFixed(1) + '" r="4" fill="' + color + '"/>';
+      tooltip.innerHTML = '<div class="chart-tooltip-title">' + esc(row.label) + '</div>' +
+        '<div class="chart-tooltip-row" style="color:' + color + '"><span class="legend-dot" style="background:' + color + '"></span><span>请求数:</span><span>' + nf().format(row.request_count) + '</span></div>';
+      const frame = document.getElementById('requestChartFrame');
+      const frameRect = frame.getBoundingClientRect();
+      const svgRect = svg.getBoundingClientRect();
+      const left = ((x / 1000) * svgRect.width) + (svgRect.left - frameRect.left);
+      const tooltipWidth = 176;
+      tooltip.style.left = Math.max(8, Math.min(frameRect.width - tooltipWidth - 8, left + 12)) + 'px';
+      tooltip.style.top = '48px';
+      tooltip.style.display = 'block';
     }
 
-    function grid(max) {
+    // 请求趋势的坐标网格：单 Y 轴 + 复用 usage 的自适应 X 轴标签
+    function requestGrid(plot, max) {
       let out = '';
       for (let i = 0; i <= 4; i++) {
-        const y = 47 + i * 51;
-        out += '<line class="axis" x1="70" y1="' + y + '" x2="930" y2="' + y + '"/><text class="tick" x="60" y="' + (y + 4) + '" text-anchor="end">' + nf().format(Math.round(max * (4 - i) / 4)) + '</text>';
+        const y = plot.top + i * ((plot.bottom - plot.top) / 4);
+        const value = Math.round(max * (4 - i) / 4);
+        out += '<line class="axis" x1="' + plot.left + '" y1="' + y.toFixed(1) + '" x2="' + plot.right + '" y2="' + y.toFixed(1) + '"/>';
+        out += '<text class="tick" x="' + (plot.left - 10) + '" y="' + (y + 4).toFixed(1) + '" text-anchor="end">' + nf().format(value) + '</text>';
       }
-      return out;
+      return out + usageXAxis(plot, Math.min(12, dataLabelCount()));
     }
 
     function updateVisibility() {
@@ -1394,12 +1523,17 @@
       document.getElementById('requestView').classList.toggle('hidden', state.mode !== 'requests');
       document.querySelectorAll('.usage-panel').forEach((el) => el.classList.add('hidden'));
       document.getElementById('usage' + cap(state.usageTab) + 'Panel').classList.remove('hidden');
+      document.querySelectorAll('.request-panel').forEach((el) => el.classList.add('hidden'));
+      if (state.mode === 'requests') {
+        document.getElementById('request' + cap(state.requestTab) + 'Panel').classList.remove('hidden');
+      }
       document.querySelectorAll('.mode-tab').forEach((button) => {
         const active = button.dataset.mode === state.mode;
         button.classList.toggle('active', active);
         button.setAttribute('aria-selected', String(active));
       });
-      document.querySelectorAll('.tab-trigger').forEach((button) => button.classList.toggle('active', button.dataset.tab === state.usageTab));
+      document.querySelectorAll('[data-tab]').forEach((button) => button.classList.toggle('active', button.dataset.tab === state.usageTab));
+      document.querySelectorAll('[data-rtab]').forEach((button) => button.classList.toggle('active', button.dataset.rtab === state.requestTab));
     }
 
     function closeDropdowns(except) {
@@ -1543,18 +1677,22 @@
       updateVisibility();
       refresh().catch(showError);
     }));
-    document.querySelectorAll('.tab-trigger').forEach((button) => button.addEventListener('click', () => {
+    document.querySelectorAll('[data-tab]').forEach((button) => button.addEventListener('click', () => {
       state.usageTab = button.dataset.tab;
       updateVisibility();
     }));
-    document.getElementById('hookFilter').addEventListener('change', () => refresh().catch(showError));
-    document.getElementById('machineFilter').addEventListener('change', () => refresh().catch(showError));
+    document.querySelectorAll('[data-rtab]').forEach((button) => button.addEventListener('click', () => {
+      state.requestTab = button.dataset.rtab;
+      updateVisibility();
+    }));
     document.getElementById('appFilter').addEventListener('click', (event) => {
       const button = event.target.closest('.app-button');
       if (!button) return;
       state.appType = button.dataset.app;
       state.provider = undefined;
       state.model = undefined;
+      state.hookType = undefined;
+      state.machine = undefined;
       renderAppFilters();
       refresh().catch(showError);
     });
