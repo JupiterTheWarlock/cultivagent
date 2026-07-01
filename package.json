@@ -1,0 +1,27 @@
+{
+  "name": "cultivagent",
+  "version": "0.1.0",
+  "private": false,
+  "type": "module",
+  "description": "Personal agent hook and token usage monitor.",
+  "bin": {
+    "cultivagent": "./bin/cultivagent.mjs"
+  },
+  "scripts": {
+    "start": "node ./bin/cultivagent.mjs",
+    "smoke": "node ./test/smoke.mjs",
+    "cli-smoke": "node ./scripts/cli-smoke.mjs"
+  },
+  "engines": {
+    "node": ">=24.0.0"
+  },
+  "keywords": [
+    "agent",
+    "hooks",
+    "tokens",
+    "codex",
+    "claude-code",
+    "opencode"
+  ],
+  "license": "MIT"
+}
