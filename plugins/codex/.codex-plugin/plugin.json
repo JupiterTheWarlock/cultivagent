@@ -1,5 +1,5 @@
 {
-  "name": "cultivagent",
+  "name": "codex",
   "version": "0.1.0",
   "description": "Send Codex hook events to a self-hosted Cultivagent server for token & usage monitoring. Codex hook surface has no SessionEnd, so capture relies on Stop/PreCompact + SessionStart.",
   "author": { "name": "cultivagent", "url": "https://github.com/JupiterTheWarlock/cultivagent" },

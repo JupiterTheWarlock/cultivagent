@@ -1,0 +1,14 @@
+{
+  "id": "cultivagent",
+  "name": "Cultivagent",
+  "description": "Export OpenClaw lifecycle and model usage events to Cultivagent.",
+  "version": "0.1.0",
+  "activation": {
+    "onStartup": true
+  },
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {}
+  }
+}

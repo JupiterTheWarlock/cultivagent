@@ -4,13 +4,19 @@ Forwards OpenClaw lifecycle and model-usage events to a self-hosted [Cultivagent
 
 This is an OpenClaw **native plugin entry** (`definePluginEntry` from `openclaw/plugin-sdk/plugin-entry`). It registers 32 OpenClaw hooks (`session_start`/`session_end`, `before_compaction`/`after_compaction`, `model_call_started`/`model_call_ended`, `llm_input`/`llm_output`, tool calls, gateway start/stop, …).
 
-## Status
+## Install
 
-Stub-grade. The entry is complete (all hooks wired, usage forwarded from `event.usage`), but:
+```bash
+CULTIVAGENT_ENDPOINT=https://your-server.example.com \
+CULTIVAGENT_TOKEN=<token> \
+bash plugins/openclaw/setup-helper/install.sh
+```
 
-- it is TypeScript and needs to be built (or loaded by an OpenClaw runtime that accepts `.ts`) before registration;
-- the OpenClaw plugin manifest / registration flow is not bundled here — follow your OpenClaw version's plugin install docs to register this entry;
-- provider-specific `usage` field shapes should be verified with a fixture before treating totals as authoritative.
+The installer writes the shared `~/.cultivagent/config.json`, links this plugin
+directory with `openclaw plugins install --link`, enables `plugins.entries.cultivagent`,
+and allows conversation-observation hooks so `llm_output` usage metadata can be
+observed. The plugin forwards metadata and usage counters, including nested
+OpenClaw usage state; it does not forward raw prompts or model output.
 
 ## Config
 
@@ -24,10 +30,27 @@ env (`CULTIVAGENT_ENDPOINT` / `CULTIVAGENT_TOKEN`) > `~/.cultivagent/config.json
    { "endpoint": "https://your-server.example.com", "token": "<32-hex>" }
    ```
 
-2. Build (if your OpenClaw runtime needs compiled JS):
+2. Install and enable the plugin:
 
    ```bash
-   tsc -p plugins/openclaw
+   openclaw plugins install plugins/openclaw --link
+   openclaw plugins enable cultivagent
+   openclaw config patch --stdin <<'JSON'
+   {
+     "plugins": {
+       "entries": {
+         "cultivagent": {
+           "enabled": true,
+           "hooks": {
+             "allowConversationAccess": true,
+             "timeoutMs": 5000
+           },
+           "config": {}
+         }
+       }
+     }
+   }
+   JSON
    ```
 
-3. Register the entry with OpenClaw per its plugin install documentation.
+3. Restart the OpenClaw Gateway.

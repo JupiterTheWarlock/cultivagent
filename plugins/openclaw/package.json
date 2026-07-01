@@ -1,0 +1,15 @@
+{
+  "name": "cultivagent",
+  "version": "0.1.0",
+  "private": true,
+  "description": "OpenClaw lifecycle and model usage exporter for Cultivagent.",
+  "type": "module",
+  "peerDependencies": {
+    "openclaw": ">=2026.5.17"
+  },
+  "openclaw": {
+    "extensions": [
+      "./index.ts"
+    ]
+  }
+}

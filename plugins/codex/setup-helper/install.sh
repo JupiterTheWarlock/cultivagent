@@ -77,7 +77,7 @@ cfg_get() {
 write_config() {
   node -e '
     const fs = require("fs");
-    const [path, endpoint, token] = process.argv.slice(2);
+    const [path, endpoint, token] = process.argv.slice(1);
     fs.writeFileSync(path, JSON.stringify({ endpoint, token }, null, 2) + "\n");
   ' "$CONFIG_FILE" "$1" "$2"
   chmod 600 "$CONFIG_FILE" 2>/dev/null || true
@@ -241,7 +241,11 @@ fs.writeFileSync(path, text);
 NODE
 info "enabled plugin + features.plugin_hooks in $CODEX_CONFIG"
 
-codex plugin install "$PLUGIN_ID" >/dev/null 2>&1 || info "plugin install: already installed or queued"
+if codex plugin add --help >/dev/null 2>&1; then
+  codex plugin add "$PLUGIN_ID" >/dev/null 2>&1 || info "plugin add: already installed or queued"
+else
+  codex plugin install "$PLUGIN_ID" >/dev/null 2>&1 || info "plugin install: already installed or queued"
+fi
 
 # --- 6. self-check ---
 heading 'Step 6/6 — self-check'

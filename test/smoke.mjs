@@ -3,7 +3,7 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { hostname, tmpdir } from "node:os";
 import { join } from "node:path";
 import { createCultivagentServer } from "../src/server.mjs";
-import { translateLoopEvent } from "../src/normalize.mjs";
+import { normalizeEvent, translateLoopEvent } from "../src/normalize.mjs";
 
 const dir = mkdtempSync(join(tmpdir(), "cultivagent-"));
 const dbPath = join(dir, "test.sqlite");
@@ -120,6 +120,16 @@ try {
   assert.equal(translateLoopEvent("claude-code", "PreToolUse").loop_event, "tool.before");
   assert.equal(translateLoopEvent("pi", "before_provider_request").agent_status, "thinking");
   assert.equal(translateLoopEvent("openclaw", "subagent_spawned").agent_status, "delegating");
+  const openClawUsage = normalizeEvent({
+    source_agent: "openclaw",
+    event_type: "llm_output",
+    usage: { input: 4, output: 2, cacheRead: 3, cacheWrite: 1 },
+  }).usage;
+  assert.equal(openClawUsage.input_tokens, 4);
+  assert.equal(openClawUsage.output_tokens, 2);
+  assert.equal(openClawUsage.cache_read_tokens, 3);
+  assert.equal(openClawUsage.cache_write_tokens, 1);
+  assert.equal(openClawUsage.total_tokens, 10);
 
   // plugin hooks.json 合法性（取代已移除的 generate-hook-config 测试）
   const claudeHooks = JSON.parse(readFileSync(new URL("../plugins/claude-code/hooks/hooks.json", import.meta.url), "utf8"));

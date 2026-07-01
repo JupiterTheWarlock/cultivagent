@@ -11,11 +11,11 @@ const KNOWN_AGENTS = new Set([
 ]);
 
 const TOKEN_KEYS = {
-  input_tokens: ["input_tokens", "inputTokens", "prompt_tokens", "promptTokens"],
-  output_tokens: ["output_tokens", "outputTokens", "completion_tokens", "completionTokens"],
-  cache_read_tokens: ["cache_read_tokens", "cacheReadTokens", "cache_read_input_tokens"],
-  cache_write_tokens: ["cache_write_tokens", "cacheWriteTokens", "cache_creation_input_tokens"],
-  total_tokens: ["total_tokens", "totalTokens", "tokens"],
+  input_tokens: ["input_tokens", "inputTokens", "prompt_tokens", "promptTokens", "input", "prompt"],
+  output_tokens: ["output_tokens", "outputTokens", "completion_tokens", "completionTokens", "output", "completion"],
+  cache_read_tokens: ["cache_read_tokens", "cacheReadTokens", "cache_read_input_tokens", "cacheRead", "cache_read"],
+  cache_write_tokens: ["cache_write_tokens", "cacheWriteTokens", "cache_creation_input_tokens", "cacheWrite", "cacheCreation", "cache_write"],
+  total_tokens: ["total_tokens", "totalTokens", "tokens", "total"],
   cost_usd: ["cost_usd", "costUsd", "cost"],
 };
 

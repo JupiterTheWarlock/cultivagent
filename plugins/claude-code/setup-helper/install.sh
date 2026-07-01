@@ -188,7 +188,7 @@ else
     install_legacy
   fi
 fi
-claude plugin enable "$PLUGIN_ID" >/dev/null 2>&1 || true
+claude plugin enable "$PLUGIN_ID" --scope user >/dev/null 2>&1 || true
 info "enabled $PLUGIN_ID"
 
 # --- 5. self-check ---
