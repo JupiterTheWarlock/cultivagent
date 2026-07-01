@@ -89,7 +89,7 @@ export function insertEvent(db, event) {
     JSON.stringify(event.meta),
   );
   if (result.changes === 0) return false;
-  upsertDaily(db, event);
+  if (isUsageEvent(event)) upsertDaily(db, event);
   upsertAgentState(db, event);
   return true;
 }
@@ -117,8 +117,112 @@ export function listAgents(db) {
   }));
 }
 
+export function listRequestStats(db, filters = {}) {
+  const events = listFilteredEvents(db, filters);
+  const limit = clampLimit(filters.limit, 100, 1000);
+  return {
+    summary: {
+      total_requests: events.length,
+      agents: unique(events.map((e) => e.source_agent)).length,
+      machines: unique(events.map(eventMachine)).length,
+      hook_types: unique(events.map((e) => e.event_type)).length,
+    },
+    requests: events.slice(0, limit).map((event) => ({
+      event_id: event.event_id,
+      agent: event.source_agent,
+      time: event.occurred_at,
+      machine: eventMachine(event),
+      hook_type: event.event_type,
+    })),
+    by_agent: countBy(events, (event) => event.source_agent, "agent"),
+    by_machine: countBy(events, eventMachine, "machine"),
+    by_hook_type: countBy(events, (event) => event.event_type, "hook_type"),
+    trend: requestTrend(events, filters),
+  };
+}
+
+export function listUsageSummary(db, filters = {}) {
+  const events = listUsageEvents(db, filters);
+  return { summary: usageSummary(events) };
+}
+
+export function listUsageTrends(db, filters = {}) {
+  return { trends: usageTrend(listUsageEvents(db, filters), filters) };
+}
+
+export function listUsageProviderStats(db, filters = {}) {
+  const groups = groupBy(listUsageEvents(db, filters), usageProvider);
+  return {
+    providers: [...groups.entries()].map(([provider, events]) => {
+      const summary = usageSummary(events);
+      return {
+        provider,
+        request_count: summary.total_requests,
+        total_tokens: summary.real_total_tokens,
+        success_rate: summary.success_rate,
+        avg_latency_ms: average(events.map((event) => event.duration_ms).filter((n) => n != null)),
+      };
+    }).sort((a, b) => b.total_tokens - a.total_tokens),
+  };
+}
+
+export function listUsageModelStats(db, filters = {}) {
+  const groups = groupBy(listUsageEvents(db, filters), (event) => event.model || "unknown");
+  return {
+    models: [...groups.entries()].map(([model, events]) => {
+      const summary = usageSummary(events);
+      return {
+        model,
+        request_count: summary.total_requests,
+        total_tokens: summary.real_total_tokens,
+      };
+    }).sort((a, b) => b.total_tokens - a.total_tokens),
+  };
+}
+
+export function listUsageLogs(db, filters = {}, page = 0, pageSize = 20) {
+  const events = listUsageEvents(db, filters);
+  const size = clampLimit(pageSize, 20, 100);
+  const currentPage = Math.max(0, Number(page) || 0);
+  const start = currentPage * size;
+  return {
+    logs: events.slice(start, start + size).map((event) => {
+      const u = event.usage || {};
+      return {
+        event_id: event.event_id,
+        time: event.occurred_at,
+        agent: event.source_agent,
+        provider: usageProvider(event),
+        model: event.model || "unknown",
+        input_tokens: Number(u.input_tokens || 0),
+        output_tokens: Number(u.output_tokens || 0),
+        cache_read_tokens: Number(u.cache_read_tokens || 0),
+        cache_write_tokens: Number(u.cache_write_tokens || 0),
+        total_tokens: usageTotal(event),
+        latency_ms: event.duration_ms ?? null,
+        status: event.status,
+        source: event.source_surface,
+      };
+    }),
+    total: events.length,
+    page: currentPage,
+    page_size: size,
+  };
+}
+
 export function resetDatabase(db) {
   db.exec("DELETE FROM events; DELETE FROM daily_usage; DELETE FROM agent_state;");
+}
+
+export function isUsageEvent(event) {
+  const u = event.usage || {};
+  return event.meta?.accounting !== false && (
+    Number(u.input_tokens || 0) > 0 ||
+    Number(u.output_tokens || 0) > 0 ||
+    Number(u.cache_read_tokens || 0) > 0 ||
+    Number(u.cache_write_tokens || 0) > 0 ||
+    Number(u.total_tokens || 0) > 0
+  );
 }
 
 function upsertDaily(db, event) {
@@ -188,4 +292,172 @@ function rowToEvent(row) {
     usage: JSON.parse(row.usage_json),
     meta: JSON.parse(row.meta_json),
   };
+}
+
+function listUsageEvents(db, filters) {
+  return listFilteredEvents(db, filters).filter(isUsageEvent);
+}
+
+function listFilteredEvents(db, filters = {}) {
+  const conditions = [];
+  const params = [];
+  if (filters.start) {
+    conditions.push("occurred_at >= ?");
+    params.push(filters.start);
+  }
+  if (filters.end) {
+    conditions.push("occurred_at <= ?");
+    params.push(filters.end);
+  }
+  if (filters.agent) {
+    conditions.push("source_agent = ?");
+    params.push(filters.agent);
+  }
+  if (filters.provider) {
+    conditions.push("(provider = ? OR (provider = 'unknown' AND source_agent = ?))");
+    params.push(filters.provider);
+    params.push(filters.provider);
+  }
+  if (filters.model) {
+    conditions.push("model = ?");
+    params.push(filters.model);
+  }
+  if (filters.status) {
+    conditions.push("status = ?");
+    params.push(filters.status);
+  }
+  if (filters.hook_type) {
+    conditions.push("event_type = ?");
+    params.push(filters.hook_type);
+  }
+
+  const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
+  let events = db.prepare(`SELECT * FROM events ${where} ORDER BY occurred_at DESC`).all(...params).map(rowToEvent);
+  if (filters.machine) events = events.filter((event) => eventMachine(event) === filters.machine);
+  return events;
+}
+
+function usageSummary(events) {
+  const totals = events.reduce((sum, event) => {
+    const u = event.usage || {};
+    sum.input += Number(u.input_tokens || 0);
+    sum.output += Number(u.output_tokens || 0);
+    sum.cacheRead += Number(u.cache_read_tokens || 0);
+    sum.cacheWrite += Number(u.cache_write_tokens || 0);
+    if (event.status !== "error") sum.success += 1;
+    return sum;
+  }, { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, success: 0 });
+  const realTotal = totals.input + totals.output + totals.cacheRead + totals.cacheWrite;
+  const cacheableInput = totals.input + totals.cacheRead + totals.cacheWrite;
+  return {
+    total_requests: events.length,
+    total_input_tokens: totals.input,
+    total_output_tokens: totals.output,
+    total_cache_write_tokens: totals.cacheWrite,
+    total_cache_read_tokens: totals.cacheRead,
+    real_total_tokens: realTotal,
+    cache_hit_rate: cacheableInput > 0 ? totals.cacheRead / cacheableInput : 0,
+    success_rate: events.length ? (totals.success / events.length) * 100 : 0,
+  };
+}
+
+function usageTrend(events, filters) {
+  return bucketEvents(events, filters).map((bucket) => {
+    const summary = usageSummary(bucket.events);
+    return {
+      time: bucket.time,
+      request_count: summary.total_requests,
+      total_input_tokens: summary.total_input_tokens,
+      total_output_tokens: summary.total_output_tokens,
+      total_cache_write_tokens: summary.total_cache_write_tokens,
+      total_cache_read_tokens: summary.total_cache_read_tokens,
+      real_total_tokens: summary.real_total_tokens,
+    };
+  });
+}
+
+function requestTrend(events, filters) {
+  return bucketEvents(events, filters).map((bucket) => ({
+    time: bucket.time,
+    request_count: bucket.events.length,
+  }));
+}
+
+function bucketEvents(events, filters) {
+  const sorted = [...events].sort((a, b) => a.occurred_at.localeCompare(b.occurred_at));
+  const startMs = filters.start ? Date.parse(filters.start) : Date.parse(sorted[0]?.occurred_at || "");
+  const endMs = filters.end ? Date.parse(filters.end) : Date.parse(sorted.at(-1)?.occurred_at || "");
+  const spanMs = Number.isFinite(startMs) && Number.isFinite(endMs) ? Math.max(0, endMs - startMs) : 0;
+  const stepMs = spanMs <= 24 * 60 * 60 * 1000 ? 60 * 60 * 1000 : 24 * 60 * 60 * 1000;
+  const map = new Map();
+
+  if (Number.isFinite(startMs) && Number.isFinite(endMs) && filters.start && filters.end) {
+    for (let ms = floorTime(startMs, stepMs); ms <= endMs; ms += stepMs) {
+      map.set(new Date(ms).toISOString(), []);
+    }
+  }
+
+  for (const event of sorted) {
+    const ms = Date.parse(event.occurred_at);
+    if (!Number.isFinite(ms)) continue;
+    const key = new Date(floorTime(ms, stepMs)).toISOString();
+    if (!map.has(key)) map.set(key, []);
+    map.get(key).push(event);
+  }
+
+  if (!map.size) return [{ time: "", events: [] }];
+  return [...map.entries()].sort((a, b) => a[0].localeCompare(b[0])).map(([time, bucket]) => ({ time, events: bucket }));
+}
+
+function floorTime(ms, stepMs) {
+  const date = new Date(ms);
+  if (stepMs >= 24 * 60 * 60 * 1000) {
+    date.setUTCHours(0, 0, 0, 0);
+    return date.getTime();
+  }
+  date.setUTCMinutes(0, 0, 0);
+  return date.getTime();
+}
+
+function countBy(events, keyFn, keyName) {
+  return [...groupBy(events, keyFn).entries()]
+    .map(([key, rows]) => ({ [keyName]: key, count: rows.length }))
+    .sort((a, b) => b.count - a.count || String(a[keyName]).localeCompare(String(b[keyName])));
+}
+
+function groupBy(items, keyFn) {
+  const map = new Map();
+  for (const item of items) {
+    const key = keyFn(item) || "unknown";
+    const rows = map.get(key) || [];
+    rows.push(item);
+    map.set(key, rows);
+  }
+  return map;
+}
+
+function usageProvider(event) {
+  return event.provider && event.provider !== "unknown" ? event.provider : event.source_agent;
+}
+
+function usageTotal(event) {
+  const u = event.usage || {};
+  return Number(u.input_tokens || 0) + Number(u.output_tokens || 0) + Number(u.cache_read_tokens || 0) + Number(u.cache_write_tokens || 0);
+}
+
+function eventMachine(event) {
+  return event.meta?.machine_name || event.host_id || "unknown";
+}
+
+function unique(values) {
+  return [...new Set(values.filter(Boolean))];
+}
+
+function average(values) {
+  if (!values.length) return 0;
+  return Math.round(values.reduce((sum, value) => sum + Number(value || 0), 0) / values.length);
+}
+
+function clampLimit(value, fallback, max) {
+  return Math.max(1, Math.min(Number(value) || fallback, max));
 }

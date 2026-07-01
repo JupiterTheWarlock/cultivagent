@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { hostname } from "node:os";
 
 const KNOWN_AGENTS = new Set([
   "codex",
@@ -25,7 +26,13 @@ export function normalizeEvent(input = {}, defaults = {}) {
   const sourceSurface = String(input.source_surface ?? defaults.source_surface ?? "hook");
   const eventType = String(input.event_type ?? input.type ?? defaults.event_type ?? "event");
   const loop = translateLoopEvent(sourceAgent, eventType, input, usage);
-  const hostId = cleanId(input.host_id ?? defaults.host_id ?? "local");
+  const defaultMeta = safeObject(defaults.meta);
+  const inputMeta = safeObject(input.meta ?? input.metadata);
+  const machineName = cleanId(
+    input.machine_name ?? input.machineName ?? input.host_name ?? input.hostName ??
+    inputMeta.machine_name ?? defaultMeta.machine_name ?? hostname()
+  );
+  const hostId = cleanId(input.host_id ?? defaults.host_id ?? shortHash(machineName));
   const workspaceId = cleanId(input.workspace_id ?? input.cwd ?? defaults.workspace_id ?? "default");
   const sessionId = cleanId(input.session_id ?? input.sessionId ?? defaults.session_id ?? "unknown");
   const turnId = cleanId(input.turn_id ?? input.prompt_id ?? input.promptId ?? defaults.turn_id ?? "");
@@ -35,8 +42,9 @@ export function normalizeEvent(input = {}, defaults = {}) {
   const status = cleanId(input.status ?? defaults.status ?? "ok");
   const durationMs = nullableNumber(input.duration_ms ?? input.durationMs);
   const meta = {
-    ...safeObject(defaults.meta),
-    ...safeObject(input.meta ?? input.metadata),
+    ...defaultMeta,
+    ...inputMeta,
+    machine_name: inputMeta.machine_name ?? defaultMeta.machine_name ?? machineName,
     loop_event: input.loop_event ?? loop.loop_event,
     agent_status: input.agent_status ?? loop.agent_status,
     event_role: input.event_role ?? loop.event_role,
@@ -140,8 +148,16 @@ export function normalizeOtelMetrics(body, defaults = {}) {
           };
           const value = Number(point.asDouble ?? point.asInt ?? point.value ?? 0);
           const usage = {};
-          if (metric.name === "claude_code.token.usage") usage.total_tokens = value;
+          if (metric.name === "claude_code.token.usage") {
+            const type = attrs.type ?? attrs["token.type"];
+            if (type === "input") usage.input_tokens = value;
+            else if (type === "output") usage.output_tokens = value;
+            else if (type === "cacheRead") usage.cache_read_tokens = value;
+            else if (type === "cacheCreation") usage.cache_write_tokens = value;
+            else usage.total_tokens = value;
+          }
           if (metric.name === "claude_code.cost.usage") usage.cost_usd = value;
+          const isClaudeUsageMetric = metric.name === "claude_code.token.usage" || metric.name === "claude_code.cost.usage";
           records.push(normalizeEvent({
             source_agent: defaults.source_agent ?? agentFromService(attrs["service.name"]),
             source_surface: "otel",
@@ -153,7 +169,7 @@ export function normalizeOtelMetrics(body, defaults = {}) {
             provider: attrs.provider,
             model: attrs.model,
             usage,
-            meta: { metric_name: metric.name },
+            meta: { metric_name: metric.name, token_type: attrs.type, metric_value: value, accounting: !isClaudeUsageMetric },
           }, defaults));
         }
       }
@@ -164,6 +180,10 @@ export function normalizeOtelMetrics(body, defaults = {}) {
 
 export function stableHash(value) {
   return createHash("sha256").update(JSON.stringify(value)).digest("hex").slice(0, 32);
+}
+
+function shortHash(value) {
+  return createHash("sha256").update(String(value ?? "")).digest("hex").slice(0, 16);
 }
 
 export function normalizeUsage(input = {}) {
