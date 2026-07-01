@@ -20,71 +20,22 @@ export CULTIVAGENT_TOKEN=change-me
 
 ## Codex
 
-Codex hooks are configured through `hooks.json` or inline `[hooks]` tables. Use the hook script for lifecycle/status events.
+Codex hooks are configured through `hooks.json` or inline `[hooks]` tables. Use the hook script for lifecycle/status events. This template wires every Codex hook event documented in the current Codex manual.
 
-`~/.codex/hooks.json` example:
+Generate `~/.codex/hooks.json`:
 
-```json
-{
-  "hooks": {
-    "SessionStart": [
-      {
-        "matcher": "startup|resume",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node D:/Users/JtheWL/cultivagent/scripts/codex-hook.mjs",
-            "statusMessage": "Cultivagent session event"
-          }
-        ]
-      }
-    ],
-    "Stop": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node D:/Users/JtheWL/cultivagent/scripts/codex-hook.mjs",
-            "timeout": 10
-          }
-        ]
-      }
-    ]
-  }
-}
+```bash
+node D:/Users/JtheWL/cultivagent/scripts/generate-hook-config.mjs codex D:/Users/JtheWL/cultivagent > ~/.codex/hooks.json
 ```
 
 For token totals, prefer Codex OTel export to `POST /otel/v1/logs`. Hook events are status signals, not the source of truth for token accounting.
 
 ## Claude Code
 
-Claude Code supports command and HTTP hooks. The easiest local hook is a command hook:
+Claude Code supports command and HTTP hooks. The easiest local hook is a command hook. Generate settings JSON:
 
-```json
-{
-  "hooks": {
-    "SessionStart": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node D:/Users/JtheWL/cultivagent/scripts/claude-hook.mjs"
-          }
-        ]
-      }
-    ],
-    "Stop": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node D:/Users/JtheWL/cultivagent/scripts/claude-hook.mjs"
-          }
-        ]
-      }
-    ]
-  }
-}
+```bash
+node D:/Users/JtheWL/cultivagent/scripts/generate-hook-config.mjs claude D:/Users/JtheWL/cultivagent > ~/.claude/settings.json
 ```
 
 For token and cost totals, configure Claude Code OpenTelemetry metrics/logs to the service:

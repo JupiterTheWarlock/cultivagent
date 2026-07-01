@@ -22,10 +22,11 @@ export async function sendEvent(event) {
 }
 
 export function baseEvent(agent, hookInput, eventType = "hook_event") {
+  const hookEvent = hookInput.hook_event ?? hookInput.hookEventName ?? hookInput.hook_event_name ?? hookInput.event ?? hookInput.type ?? eventType;
   return {
     source_agent: agent,
     source_surface: "hook",
-    event_type: String(hookInput.hook_event ?? hookInput.event ?? hookInput.type ?? eventType),
+    event_type: String(hookEvent),
     occurred_at: new Date().toISOString(),
     host_id: hash(hostname()),
     workspace_id: hash(hookInput.cwd ?? process.cwd()),
@@ -37,7 +38,7 @@ export function baseEvent(agent, hookInput, eventType = "hook_event") {
     status: hookInput.status ?? "ok",
     meta: {
       machine_name: hostname(),
-      hook_event: hookInput.hook_event ?? hookInput.event ?? hookInput.type ?? eventType,
+      hook_event: hookEvent,
       tool_name: hookInput.tool_name ?? hookInput.toolName ?? "",
     },
   };

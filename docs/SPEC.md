@@ -21,7 +21,7 @@ Cloudflare remains a later backend option for public plugin distribution and hos
 {
   "source_agent": "codex|claude-code|opencode|openclaw|pi",
   "source_surface": "hook|otel|plugin|extension|cli-smoke",
-  "event_type": "model_response|session_start|tool_end|agent_end|cli_detected",
+  "event_type": "raw vendor hook name",
   "occurred_at": "ISO-8601",
   "host_id": "redacted host key",
   "workspace_id": "redacted workspace key",
@@ -39,6 +39,8 @@ Cloudflare remains a later backend option for public plugin distribution and hos
   }
 }
 ```
+
+`event_type` stays raw. The semantic loop translation is stored in `meta.loop_event`, `meta.agent_status`, and `meta.event_role`.
 
 ## Counting Rule
 

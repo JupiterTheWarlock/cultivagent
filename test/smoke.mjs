@@ -2,7 +2,9 @@ import assert from "node:assert/strict";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { spawnSync } from "node:child_process";
 import { createCultivagentServer } from "../src/server.mjs";
+import { translateLoopEvent } from "../src/normalize.mjs";
 
 const dir = mkdtempSync(join(tmpdir(), "cultivagent-"));
 const dbPath = join(dir, "test.sqlite");
@@ -51,6 +53,15 @@ try {
   assert.equal(codex.event_count, 1);
   assert.equal(claude.total_tokens, 7);
 
+  assert.equal(translateLoopEvent("claude-code", "PreToolUse").loop_event, "tool.before");
+  assert.equal(translateLoopEvent("pi", "before_provider_request").agent_status, "thinking");
+  assert.equal(translateLoopEvent("openclaw", "subagent_spawned").agent_status, "delegating");
+
+  const codexHooks = generatedHooks("codex");
+  assert.equal(codexHooks.hooks.PreToolUse[0].hooks[0].command.includes("PreToolUse"), true);
+  const claudeHooks = generatedHooks("claude");
+  assert.equal(claudeHooks.hooks.MessageDisplay[0].hooks[0].command.includes("MessageDisplay"), true);
+
   const agents = await get(`${base}/api/agents`);
   assert.equal(agents.agents.length, 2);
 
@@ -98,4 +109,13 @@ async function text(url) {
   const response = await fetch(url);
   if (!response.ok) assert.fail(await response.text());
   return response.text();
+}
+
+function generatedHooks(agent) {
+  const result = spawnSync(process.execPath, ["./scripts/generate-hook-config.mjs", agent, process.cwd()], {
+    cwd: process.cwd(),
+    encoding: "utf8",
+  });
+  assert.equal(result.status, 0, result.stderr);
+  return JSON.parse(result.stdout);
 }

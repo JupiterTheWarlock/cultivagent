@@ -16,6 +16,7 @@ export const Cultivagent = async ({ project, directory, worktree }) => {
         provider: event.properties?.providerID ?? event.properties?.provider ?? "unknown",
         status: event.properties?.error ? "error" : "ok",
         meta: {
+          raw_hook: event.type,
           opencode_event: event.type,
         },
       });

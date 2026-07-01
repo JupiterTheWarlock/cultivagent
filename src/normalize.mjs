@@ -24,6 +24,7 @@ export function normalizeEvent(input = {}, defaults = {}) {
   const sourceAgent = normalizeAgent(input.source_agent ?? defaults.source_agent);
   const sourceSurface = String(input.source_surface ?? defaults.source_surface ?? "hook");
   const eventType = String(input.event_type ?? input.type ?? defaults.event_type ?? "event");
+  const loop = translateLoopEvent(sourceAgent, eventType, input, usage);
   const hostId = cleanId(input.host_id ?? defaults.host_id ?? "local");
   const workspaceId = cleanId(input.workspace_id ?? input.cwd ?? defaults.workspace_id ?? "default");
   const sessionId = cleanId(input.session_id ?? input.sessionId ?? defaults.session_id ?? "unknown");
@@ -33,7 +34,13 @@ export function normalizeEvent(input = {}, defaults = {}) {
   const provider = cleanId(input.provider ?? input.provider_id ?? input.providerId ?? defaults.provider ?? "unknown");
   const status = cleanId(input.status ?? defaults.status ?? "ok");
   const durationMs = nullableNumber(input.duration_ms ?? input.durationMs);
-  const meta = safeObject(input.meta ?? input.metadata ?? defaults.meta);
+  const meta = {
+    ...safeObject(defaults.meta),
+    ...safeObject(input.meta ?? input.metadata),
+    loop_event: input.loop_event ?? loop.loop_event,
+    agent_status: input.agent_status ?? loop.agent_status,
+    event_role: input.event_role ?? loop.event_role,
+  };
 
   const basis = {
     sourceAgent,
@@ -183,6 +190,101 @@ export function normalizeUsage(input = {}) {
   return out;
 }
 
+export function translateLoopEvent(agent, eventType, input = {}, usage = normalizeUsage(input)) {
+  const name = String(eventType ?? "").replace(/^claude_code\./, "").toLowerCase();
+  const hasUsage = Boolean(usage.total_tokens || usage.input_tokens || usage.output_tokens || usage.cost_usd != null);
+  const exact = new Map([
+    ["sessionstart", ["session.start", "idle", "session"]],
+    ["session_start", ["session.start", "idle", "session"]],
+    ["session.created", ["session.start", "idle", "session"]],
+    ["sessionend", ["session.end", "idle", "session"]],
+    ["session_end", ["session.end", "idle", "session"]],
+    ["session_shutdown", ["session.end", "idle", "session"]],
+    ["session.deleted", ["session.end", "idle", "session"]],
+    ["setup", ["session.setup", "setup", "session"]],
+    ["userpromptsubmit", ["input.received", "receiving_input", "input"]],
+    ["input", ["input.received", "receiving_input", "input"]],
+    ["tui.prompt.append", ["input.received", "receiving_input", "input"]],
+    ["userpromptexpansion", ["input.expanded", "receiving_input", "input"]],
+    ["instructionsloaded", ["context.loaded", "loading_context", "context"]],
+    ["resources_discover", ["context.loaded", "loading_context", "context"]],
+    ["before_agent_start", ["agent.starting", "loading_context", "agent"]],
+    ["agent_start", ["agent.start", "thinking", "agent"]],
+    ["turn_start", ["turn.start", "thinking", "turn"]],
+    ["context", ["context.build", "thinking", "context"]],
+    ["before_model_resolve", ["model.resolve", "thinking", "model"]],
+    ["model_select", ["model.select", "idle", "model"]],
+    ["thinking_level_select", ["thinking.level", "thinking", "model"]],
+    ["before_provider_request", ["model.request.start", "thinking", "model"]],
+    ["model_call_started", ["model.request.start", "thinking", "model"]],
+    ["api_request", ["model.request.start", "thinking", "model"]],
+    ["after_provider_response", ["model.response.headers", "streaming", "model"]],
+    ["model_call_ended", ["model.response", hasUsage ? "done" : "streaming", "model"]],
+    ["llm_output", ["model.response", "done", "model"]],
+    ["assistant_response", ["model.response", "done", "model"]],
+    ["model_response", ["model.response", "done", "model"]],
+    ["messagedisplay", ["message.streaming", "streaming", "message"]],
+    ["message_update", ["message.streaming", "streaming", "message"]],
+    ["message.updated", ["message.streaming", "streaming", "message"]],
+    ["message_start", ["message.start", "streaming", "message"]],
+    ["message_end", ["message.end", hasUsage ? "done" : "streaming", "message"]],
+    ["pretooluse", ["tool.before", "tool_calling", "tool"]],
+    ["before_tool_call", ["tool.before", "tool_calling", "tool"]],
+    ["tool_call", ["tool.before", "tool_calling", "tool"]],
+    ["tool.execute.before", ["tool.before", "tool_calling", "tool"]],
+    ["tool_execution_start", ["tool.start", "tool_calling", "tool"]],
+    ["tool_execution_update", ["tool.update", "tool_calling", "tool"]],
+    ["tool_result", ["tool.result", "tool_calling", "tool"]],
+    ["posttooluse", ["tool.end", "thinking", "tool"]],
+    ["after_tool_call", ["tool.end", "thinking", "tool"]],
+    ["tool.execute.after", ["tool.end", "thinking", "tool"]],
+    ["tool_execution_end", ["tool.end", "thinking", "tool"]],
+    ["posttoolbatch", ["tool.batch.end", "thinking", "tool"]],
+    ["permissionrequest", ["approval.request", "waiting_approval", "approval"]],
+    ["permission.asked", ["approval.request", "waiting_approval", "approval"]],
+    ["permission.replied", ["approval.response", "thinking", "approval"]],
+    ["permissiondenied", ["approval.denied", "thinking", "approval"]],
+    ["elicitation", ["user.input.request", "waiting_user", "approval"]],
+    ["elicitationresult", ["user.input.response", "thinking", "approval"]],
+    ["subagentstart", ["subagent.start", "delegating", "subagent"]],
+    ["subagent_start", ["subagent.start", "delegating", "subagent"]],
+    ["subagent_spawned", ["subagent.start", "delegating", "subagent"]],
+    ["taskcreated", ["subagent.start", "delegating", "subagent"]],
+    ["subagentstop", ["subagent.end", "thinking", "subagent"]],
+    ["subagent_end", ["subagent.end", "thinking", "subagent"]],
+    ["subagent_ended", ["subagent.end", "thinking", "subagent"]],
+    ["taskcompleted", ["subagent.end", "thinking", "subagent"]],
+    ["before_agent_finalize", ["agent.finalizing", "finalizing", "agent"]],
+    ["stop", ["agent.end", "done", "agent"]],
+    ["agent_end", ["agent.end", "done", "agent"]],
+    ["session.idle", ["agent.idle", "idle", "agent"]],
+    ["teammateidle", ["agent.idle", "idle", "agent"]],
+    ["precompact", ["compaction.before", "compacting", "context"]],
+    ["session_before_compact", ["compaction.before", "compacting", "context"]],
+    ["before_compaction", ["compaction.before", "compacting", "context"]],
+    ["postcompact", ["compaction.after", "thinking", "context"]],
+    ["session_compact", ["compaction.after", "thinking", "context"]],
+    ["session.compacted", ["compaction.after", "thinking", "context"]],
+    ["after_compaction", ["compaction.after", "thinking", "context"]],
+    ["configchange", ["environment.changed", "idle", "environment"]],
+    ["cwdchanged", ["environment.changed", "idle", "environment"]],
+    ["filechanged", ["environment.changed", "idle", "environment"]],
+    ["file.edited", ["environment.changed", "idle", "environment"]],
+    ["file.watcher.updated", ["environment.changed", "idle", "environment"]],
+    ["command.executed", ["command.executed", "thinking", "tool"]],
+    ["notification", ["notification", "idle", "notification"]],
+    ["cli_detected", ["probe.detected", "idle", "probe"]],
+  ]);
+  const mapped = exact.get(name);
+  if (mapped) return loopObject(mapped);
+  if (name.includes("error") || name.includes("failure")) return loopObject(["error", "error", "error"]);
+  if (name.includes("tool")) return loopObject(["tool.event", "tool_calling", "tool"]);
+  if (name.includes("message")) return loopObject(["message.event", "streaming", "message"]);
+  if (name.includes("session")) return loopObject(["session.event", "idle", "session"]);
+  if (hasUsage) return loopObject(["model.response", "done", "model"]);
+  return loopObject(["hook.raw", "running", "raw"]);
+}
+
 function normalizeAgent(value) {
   const agent = String(value ?? "cultivagent").toLowerCase();
   return KNOWN_AGENTS.has(agent) ? agent : "cultivagent";
@@ -193,6 +295,10 @@ function otelEventType(agent, name, kind, usage) {
   if (name === "assistant_response") return "model_response";
   if (usage.total_tokens || usage.cost_usd != null) return "model_response";
   return String(name).replace(/^claude_code\./, "");
+}
+
+function loopObject([loop_event, agent_status, event_role]) {
+  return { loop_event, agent_status, event_role };
 }
 
 function agentFromService(service) {

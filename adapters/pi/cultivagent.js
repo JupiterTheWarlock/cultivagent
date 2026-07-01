@@ -3,15 +3,34 @@ const token = process.env.CULTIVAGENT_TOKEN ?? "";
 
 export default function cultivagent(pi) {
   for (const eventName of [
+    "project_trust",
     "session_start",
+    "session_info_changed",
+    "session_before_switch",
+    "session_before_fork",
+    "session_before_compact",
+    "session_compact",
+    "session_shutdown",
+    "resources_discover",
+    "input",
+    "before_agent_start",
     "agent_start",
     "agent_end",
     "turn_start",
     "turn_end",
+    "message_start",
+    "message_update",
     "message_end",
+    "context",
+    "before_provider_request",
+    "after_provider_response",
+    "tool_call",
+    "tool_result",
     "tool_execution_start",
+    "tool_execution_update",
     "tool_execution_end",
     "model_select",
+    "thinking_level_select",
   ]) {
     pi.on(eventName, async (event) => {
       const messageUsage = event?.message?.usage ?? {};
@@ -31,8 +50,9 @@ export default function cultivagent(pi) {
           total_tokens: messageUsage.totalTokens ?? messageUsage.total_tokens ?? 0,
           cost_usd: messageUsage.cost?.total ?? null,
         },
-        meta: { pi_event: eventName },
+        meta: { raw_hook: eventName, pi_event: eventName },
       });
+      if (eventName === "project_trust") return { trusted: "undecided" };
     });
   }
 }

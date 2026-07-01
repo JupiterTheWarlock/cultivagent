@@ -8,7 +8,40 @@ export default definePluginEntry({
   name: "Cultivagent",
   description: "Export OpenClaw lifecycle and model usage events to Cultivagent.",
   register(api) {
-    for (const name of ["model_call_started", "model_call_ended", "llm_output", "agent_end", "before_tool_call", "after_tool_call"]) {
+    for (const name of [
+      "inbound_claim",
+      "message_received",
+      "message_sending",
+      "reply_payload_sending",
+      "message_sent",
+      "before_dispatch",
+      "reply_dispatch",
+      "session_start",
+      "session_end",
+      "before_compaction",
+      "after_compaction",
+      "before_reset",
+      "subagent_spawned",
+      "subagent_ended",
+      "subagent_delivery_target",
+      "gateway_start",
+      "gateway_stop",
+      "cron_changed",
+      "before_install",
+      "before_model_resolve",
+      "model_call_started",
+      "model_call_ended",
+      "llm_input",
+      "llm_output",
+      "agent_turn_prepare",
+      "before_agent_run",
+      "before_agent_reply",
+      "before_agent_finalize",
+      "agent_end",
+      "heartbeat_prompt_contribution",
+      "before_tool_call",
+      "after_tool_call",
+    ]) {
       api.on(name, async (event: any) => {
         await send({
           source_agent: "openclaw",
@@ -21,7 +54,7 @@ export default definePluginEntry({
           provider: event.provider ?? event.providerId ?? "unknown",
           status: event.error ? "error" : "ok",
           usage: event.usage ?? {},
-          meta: { openclaw_hook: name },
+          meta: { raw_hook: name, openclaw_hook: name },
         });
       });
     }

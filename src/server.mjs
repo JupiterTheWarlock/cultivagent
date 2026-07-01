@@ -325,8 +325,8 @@ function dashboardHtml() {
     }
     function eventRow(e) {
       const machine = e.meta?.machine_name || e.host_id || '';
-      const status = e.status || '';
-      const statusClass = status === 'ok' || status === '200' ? 'ok' : status === 'error' ? 'bad' : '';
+      const status = e.meta?.agent_status || e.status || '';
+      const statusClass = status === 'error' ? 'bad' : status === 'done' || status === 'idle' ? 'ok' : '';
       return '<tr><td>' + esc(timeLabel(e.occurred_at)) + '</td><td><b>' + esc(e.source_agent) + '</b></td><td>' +
         esc(machine) + '</td><td class="mono">' + esc(e.model || 'unknown') + '</td><td class="' + statusClass + '">' +
         esc(status) + '</td><td><span class="pill">' + esc(e.event_type) + '</span></td><td>' +
@@ -342,7 +342,7 @@ function dashboardHtml() {
         (!source || e.source_agent === source) &&
         (!model || e.model === model) &&
         (!hook || e.event_type === hook) &&
-        (!status || e.status === status) &&
+        (!status || (e.meta?.agent_status || e.status) === status) &&
         (document.getElementById('rangeFilter').value !== 'today' || String(e.occurred_at).startsWith(today))
       );
     }
@@ -350,6 +350,7 @@ function dashboardHtml() {
       setOptions('sourceFilter', t('allSources'), unique(state.events.map(e => e.source_agent)));
       setOptions('modelFilter', t('allModels'), unique(state.events.map(e => e.model).filter(Boolean)));
       setOptions('hookFilter', t('allHooks'), unique(state.events.map(e => e.event_type)));
+      setOptions('statusFilter', t('allStatus'), unique(state.events.map(e => e.meta?.agent_status || e.status).filter(Boolean)));
     }
     function setOptions(id, label, values) {
       const el = document.getElementById(id);
