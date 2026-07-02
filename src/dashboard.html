@@ -845,7 +845,10 @@
       requestTab: 'logs',
       timer: null,
       range: { preset: 'today' },
-      draft: null
+      draft: null,
+      eventCache: new Map(),
+      loadedStart: null,
+      loadedEnd: null
     };
     const nf = () => new Intl.NumberFormat(state.lang === 'zh' ? 'zh-CN' : 'en-US');
 
@@ -871,50 +874,314 @@
 
     async function refresh() {
       closeDropdowns();
-      const usageQueryString = usageQuery().toString();
-      const usageOptionQueryString = usageQuery({ provider: false, model: false }).toString();
-      const modelOptionQueryString = usageQuery({ model: false }).toString();
-      const requestQueryString = requestQuery().toString();
-      const requestOptionQueryString = requestQuery({ username: false }).toString();
-      const [health, summary, trends, providers, models, logs, providerOptions, modelOptions, requestStats, requestOptionStats] = await Promise.all([
-        get('/api/health'),
-        get('/api/usage/summary?' + usageQueryString),
-        get('/api/usage/trends?' + usageQueryString),
-        get('/api/usage/providers?' + usageQueryString),
-        get('/api/usage/models?' + usageQueryString),
-        get('/api/usage/logs?pageSize=100&' + usageQueryString),
-        get('/api/usage/providers?' + usageOptionQueryString),
-        get('/api/usage/models?' + modelOptionQueryString),
-        get('/api/request-stats?limit=100&' + requestQueryString),
-        get('/api/request-stats?limit=100&' + requestOptionQueryString)
-      ]);
-
+      const [health] = await Promise.all([get('/api/health'), ensureEventsForRange(resolveRange(state.range))]);
       document.getElementById('health').textContent = health.ok ? 'online' : 'offline';
-      renderUsageSelect('usernameSelect', state.username, requestOptionStats.by_username.map((x) => x.username), dict('allUsers'), dict('filterByUser'), (value) => {
+      renderFromCache();
+    }
+
+    async function ensureEventsForRange(range) {
+      const start = range.startDate;
+      const end = range.endDate;
+      if (state.loadedStart == null || state.loadedEnd == null) {
+        await fetchEvents(start, end);
+        state.loadedStart = start;
+        state.loadedEnd = end;
+        return;
+      }
+      if (start < state.loadedStart) {
+        await fetchEvents(start, Math.min(end, state.loadedStart));
+        state.loadedStart = start;
+      }
+      if (end > state.loadedEnd) {
+        const overlapStart = Math.max(start, state.loadedEnd - 1);
+        await fetchEvents(overlapStart, end, state.loadedEnd - 1);
+        state.loadedEnd = end;
+      }
+    }
+
+    async function fetchEvents(start, end, since) {
+      if (end < start) return;
+      const params = new URLSearchParams();
+      params.set('start', String(start));
+      params.set('end', String(end));
+      params.set('limit', '20000');
+      if (since != null) params.set('since', String(since));
+      const payload = await get('/api/events?' + params.toString());
+      for (const event of payload.events || []) {
+        state.eventCache.set(event.event_id, event);
+      }
+    }
+
+    function renderFromCache() {
+      const data = deriveDashboardData();
+      renderUsageSelect('usernameSelect', state.username, data.usernameOptions, dict('allUsers'), dict('filterByUser'), (value) => {
         state.username = value;
-        refresh();
+        renderFromCache();
       });
-      renderUsageSelect('providerSelect', state.provider, providerOptions.providers.map((x) => x.provider), dict('allSources'), dict('filterBySource'), (value) => {
+      renderUsageSelect('providerSelect', state.provider, data.providerOptions, dict('allSources'), dict('filterBySource'), (value) => {
         state.provider = value;
         state.model = undefined;
-        refresh();
+        renderFromCache();
       });
-      renderUsageSelect('modelSelect', state.model, modelOptions.models.map((x) => x.model), dict('allModels'), dict('filterByModel'), (value) => {
+      renderUsageSelect('modelSelect', state.model, data.modelOptions, dict('allModels'), dict('filterByModel'), (value) => {
         state.model = value;
-        refresh();
+        renderFromCache();
       });
-      renderUsageSelect('hookSelect', state.hookType, requestStats.by_hook_type.map((x) => x.hook_type), dict('allHooks'), dict('filterByHook'), (value) => {
+      renderUsageSelect('hookSelect', state.hookType, data.requestStats.by_hook_type.map((x) => x.hook_type), dict('allHooks'), dict('filterByHook'), (value) => {
         state.hookType = value;
-        refresh();
+        renderFromCache();
       });
-      renderUsageSelect('machineSelect', state.machine, requestStats.by_machine.map((x) => x.machine), dict('allMachines'), dict('filterByMachine'), (value) => {
+      renderUsageSelect('machineSelect', state.machine, data.requestStats.by_machine.map((x) => x.machine), dict('allMachines'), dict('filterByMachine'), (value) => {
         state.machine = value;
-        refresh();
+        renderFromCache();
       });
-      renderUsage(summary.summary, trends.trends, providers.providers, models.models, logs.logs);
-      renderRequests(requestStats);
+      renderUsage(data.usageSummary, data.usageTrends, data.providers, data.models, data.usageLogs);
+      renderRequests(data.requestStats);
       updateVisibility();
       installIcons();
+    }
+
+    function deriveDashboardData() {
+      const range = resolveRange(state.range);
+      const allRangeEvents = cachedEventsInRange(range);
+      const app = APP_FILTER_OPTIONS.find((x) => x.type === state.appType);
+      const baseEvents = allRangeEvents.filter((event) => !app?.agent || event.source_agent === app.agent);
+      const usernameOptionEvents = filterRequestEvents(baseEvents, { username: false });
+      const usernameOptions = countByLocal(usernameOptionEvents, eventUsername, 'username').map((x) => x.username);
+
+      const usageBase = baseEvents.filter((event) => !state.username || eventUsername(event) === state.username).filter(isUsageEventClient);
+      const providerOptionEvents = usageBase;
+      const providerFilteredForModels = filterUsageEvents(usageBase, { provider: true, model: false });
+      const usageEvents = filterUsageEvents(usageBase, { provider: true, model: true });
+
+      const requestEvents = filterRequestEvents(baseEvents, { username: true, hookType: true, machine: true });
+      const requestStats = buildRequestStats(requestEvents, range);
+
+      return {
+        usernameOptions,
+        providerOptions: countByLocal(providerOptionEvents, usageProvider, 'provider').map((x) => x.provider),
+        modelOptions: countByLocal(providerFilteredForModels, (event) => event.model || 'unknown', 'model').map((x) => x.model),
+        usageSummary: usageSummaryLocal(usageEvents),
+        usageTrends: usageTrendLocal(usageEvents, range),
+        providers: providerStatsLocal(usageEvents),
+        models: modelStatsLocal(usageEvents),
+        usageLogs: usageEvents.slice(0, 100).map(usageLogFromEvent),
+        requestStats,
+      };
+    }
+
+    function cachedEventsInRange(range) {
+      return Array.from(state.eventCache.values())
+        .filter((event) => {
+          const seconds = Date.parse(event.occurred_at) / 1000;
+          return Number.isFinite(seconds) && seconds >= range.startDate && seconds <= range.endDate;
+        })
+        .sort((a, b) => b.occurred_at.localeCompare(a.occurred_at));
+    }
+
+    function filterUsageEvents(events, options = {}) {
+      return events.filter((event) => {
+        if (options.provider !== false && state.provider && usageProvider(event) !== state.provider) return false;
+        if (options.model !== false && state.model && (event.model || 'unknown') !== state.model) return false;
+        return true;
+      });
+    }
+
+    function filterRequestEvents(events, options = {}) {
+      return events.filter((event) => {
+        if (options.username !== false && state.username && eventUsername(event) !== state.username) return false;
+        if (options.hookType !== false && state.hookType && event.event_type !== state.hookType) return false;
+        if (options.machine !== false && state.machine && eventMachine(event) !== state.machine) return false;
+        return true;
+      });
+    }
+
+    function buildRequestStats(events, range) {
+      return {
+        summary: {
+          total_requests: events.length,
+          agents: uniqueLocal(events.map((event) => event.source_agent)).length,
+          users: uniqueLocal(events.map(eventUsername)).length,
+          machines: uniqueLocal(events.map(eventMachine)).length,
+          hook_types: uniqueLocal(events.map((event) => event.event_type)).length,
+        },
+        requests: events.slice(0, 100).map((event) => ({
+          event_id: event.event_id,
+          agent: event.source_agent,
+          time: event.occurred_at,
+          username: eventUsername(event),
+          machine: eventMachine(event),
+          hook_type: event.event_type,
+        })),
+        by_agent: countByLocal(events, (event) => event.source_agent, 'agent'),
+        by_username: countByLocal(events, eventUsername, 'username'),
+        by_machine: countByLocal(events, eventMachine, 'machine'),
+        by_hook_type: countByLocal(events, (event) => event.event_type, 'hook_type'),
+        trend: requestTrendLocal(events, range),
+      };
+    }
+
+    function usageSummaryLocal(events) {
+      const totals = events.reduce((sum, event) => {
+        const u = event.usage || {};
+        sum.input += Number(u.input_tokens || 0);
+        sum.output += Number(u.output_tokens || 0);
+        sum.cacheRead += Number(u.cache_read_tokens || 0);
+        sum.cacheWrite += Number(u.cache_write_tokens || 0);
+        if (event.status !== 'error') sum.success += 1;
+        return sum;
+      }, { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, success: 0 });
+      const realTotal = totals.input + totals.output + totals.cacheRead + totals.cacheWrite;
+      const cacheableInput = totals.input + totals.cacheRead + totals.cacheWrite;
+      return {
+        total_requests: events.length,
+        total_input_tokens: totals.input,
+        total_output_tokens: totals.output,
+        total_cache_write_tokens: totals.cacheWrite,
+        total_cache_read_tokens: totals.cacheRead,
+        real_total_tokens: realTotal,
+        cache_hit_rate: cacheableInput > 0 ? totals.cacheRead / cacheableInput : 0,
+        success_rate: events.length ? (totals.success / events.length) * 100 : 0,
+      };
+    }
+
+    function usageTrendLocal(events, range) {
+      return bucketEventsLocal(events, range).map((bucket) => {
+        const summary = usageSummaryLocal(bucket.events);
+        return {
+          time: bucket.time,
+          request_count: summary.total_requests,
+          total_input_tokens: summary.total_input_tokens,
+          total_output_tokens: summary.total_output_tokens,
+          total_cache_write_tokens: summary.total_cache_write_tokens,
+          total_cache_read_tokens: summary.total_cache_read_tokens,
+          real_total_tokens: summary.real_total_tokens,
+        };
+      });
+    }
+
+    function requestTrendLocal(events, range) {
+      return bucketEventsLocal(events, range).map((bucket) => ({
+        time: bucket.time,
+        request_count: bucket.events.length,
+      }));
+    }
+
+    function bucketEventsLocal(events, range) {
+      const startMs = range.startDate * 1000;
+      const endMs = range.endDate * 1000;
+      const spanMs = Math.max(0, endMs - startMs);
+      const stepMs = spanMs <= 24 * 60 * 60 * 1000 ? 60 * 60 * 1000 : 24 * 60 * 60 * 1000;
+      const map = new Map();
+      for (let ms = floorTimeMs(startMs, stepMs); ms <= endMs; ms += stepMs) {
+        map.set(new Date(ms).toISOString(), []);
+      }
+      for (const event of [...events].sort((a, b) => a.occurred_at.localeCompare(b.occurred_at))) {
+        const ms = Date.parse(event.occurred_at);
+        if (!Number.isFinite(ms)) continue;
+        const key = new Date(floorTimeMs(ms, stepMs)).toISOString();
+        if (!map.has(key)) map.set(key, []);
+        map.get(key).push(event);
+      }
+      return [...map.entries()].sort((a, b) => a[0].localeCompare(b[0])).map(([time, rows]) => ({ time, events: rows }));
+    }
+
+    function providerStatsLocal(events) {
+      return Array.from(groupByLocal(events, usageProvider).entries()).map(([provider, rows]) => {
+        const summary = usageSummaryLocal(rows);
+        return {
+          provider,
+          request_count: summary.total_requests,
+          total_tokens: summary.real_total_tokens,
+          success_rate: summary.success_rate,
+          avg_latency_ms: averageLocal(rows.map((event) => event.duration_ms).filter((n) => n != null)),
+        };
+      }).sort((a, b) => b.total_tokens - a.total_tokens);
+    }
+
+    function modelStatsLocal(events) {
+      return Array.from(groupByLocal(events, (event) => event.model || 'unknown').entries()).map(([model, rows]) => {
+        const summary = usageSummaryLocal(rows);
+        return { model, request_count: summary.total_requests, total_tokens: summary.real_total_tokens };
+      }).sort((a, b) => b.total_tokens - a.total_tokens);
+    }
+
+    function usageLogFromEvent(event) {
+      const u = event.usage || {};
+      return {
+        event_id: event.event_id,
+        time: event.occurred_at,
+        agent: event.source_agent,
+        username: eventUsername(event),
+        provider: usageProvider(event),
+        model: event.model || 'unknown',
+        input_tokens: Number(u.input_tokens || 0),
+        output_tokens: Number(u.output_tokens || 0),
+        cache_read_tokens: Number(u.cache_read_tokens || 0),
+        cache_write_tokens: Number(u.cache_write_tokens || 0),
+        latency_ms: event.duration_ms ?? null,
+        status: event.status,
+        source: event.source_surface,
+      };
+    }
+
+    function isUsageEventClient(event) {
+      const u = event.usage || {};
+      return event.meta?.accounting !== false && (
+        Number(u.input_tokens || 0) > 0 ||
+        Number(u.output_tokens || 0) > 0 ||
+        Number(u.cache_read_tokens || 0) > 0 ||
+        Number(u.cache_write_tokens || 0) > 0 ||
+        Number(u.total_tokens || 0) > 0
+      );
+    }
+
+    function usageProvider(event) {
+      return event.provider && event.provider !== 'unknown' ? event.provider : event.source_agent;
+    }
+
+    function eventMachine(event) {
+      return event.meta?.machine_name || event.host_id || 'unknown';
+    }
+
+    function eventUsername(event) {
+      return event.username || event.meta?.username || event.meta?.machine_name || event.host_id || 'unknown';
+    }
+
+    function countByLocal(events, keyFn, keyName) {
+      return Array.from(groupByLocal(events, keyFn).entries())
+        .map(([key, rows]) => ({ [keyName]: key, count: rows.length }))
+        .sort((a, b) => b.count - a.count || String(a[keyName]).localeCompare(String(b[keyName])));
+    }
+
+    function groupByLocal(items, keyFn) {
+      const map = new Map();
+      for (const item of items) {
+        const key = keyFn(item) || 'unknown';
+        const rows = map.get(key) || [];
+        rows.push(item);
+        map.set(key, rows);
+      }
+      return map;
+    }
+
+    function uniqueLocal(values) {
+      return Array.from(new Set(values.filter(Boolean)));
+    }
+
+    function averageLocal(values) {
+      if (!values.length) return 0;
+      return Math.round(values.reduce((sum, value) => sum + Number(value || 0), 0) / values.length);
+    }
+
+    function floorTimeMs(ms, stepMs) {
+      const date = new Date(ms);
+      if (stepMs >= 24 * 60 * 60 * 1000) {
+        date.setUTCHours(0, 0, 0, 0);
+        return date.getTime();
+      }
+      date.setUTCMinutes(0, 0, 0);
+      return date.getTime();
     }
 
     function renderAppFilters() {
@@ -1062,34 +1329,6 @@
 
     function emptyRow(cols) {
       return '<tr><td colspan="' + cols + '" class="muted">' + esc(dict('noData')) + '</td></tr>';
-    }
-
-    function usageQuery(options = {}) {
-      const params = rangeParams();
-      const app = APP_FILTER_OPTIONS.find((x) => x.type === state.appType);
-      if (app?.agent) params.set('agent', app.agent);
-      if (state.username) params.set('username', state.username);
-      if (options.provider !== false && state.provider) params.set('provider', state.provider);
-      if (options.model !== false && state.model) params.set('model', state.model);
-      return params;
-    }
-
-    function requestQuery(options = {}) {
-      const params = rangeParams();
-      const app = APP_FILTER_OPTIONS.find((x) => x.type === state.appType);
-      if (app?.agent) params.set('agent', app.agent);
-      if (options.username !== false && state.username) params.set('username', state.username);
-      if (state.hookType) params.set('hook_type', state.hookType);
-      if (state.machine) params.set('machine', state.machine);
-      return params;
-    }
-
-    function rangeParams() {
-      const params = new URLSearchParams();
-      const resolved = resolveRange(state.range);
-      params.set('start', String(resolved.startDate));
-      params.set('end', String(resolved.endDate));
-      return params;
     }
 
     function resolveRange(selection, nowMs = Date.now()) {
@@ -1706,12 +1945,12 @@
       localStorage.setItem('cultivagent_lang', state.lang);
       updateRangeLabel();
       renderRefreshSelect();
-      refresh().catch(showError);
+      renderFromCache();
     });
     document.querySelectorAll('.mode-tab').forEach((button) => button.addEventListener('click', () => {
       state.mode = button.dataset.mode;
       updateVisibility();
-      refresh().catch(showError);
+      renderFromCache();
     }));
     document.querySelectorAll('[data-tab]').forEach((button) => button.addEventListener('click', () => {
       state.usageTab = button.dataset.tab;
@@ -1730,7 +1969,7 @@
       state.hookType = undefined;
       state.machine = undefined;
       renderAppFilters();
-      refresh().catch(showError);
+      renderFromCache();
     });
 
     document.getElementById('lang').value = state.lang;

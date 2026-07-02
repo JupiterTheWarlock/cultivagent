@@ -97,10 +97,27 @@ export function insertEvent(db, event) {
   return true;
 }
 
-export function listEvents(db, limit = 100) {
+export function listEvents(db, options = 100) {
+  const filters = typeof options === "object" && options !== null ? options : { limit: options };
+  const conditions = [];
+  const params = [];
+  if (filters.start) {
+    conditions.push("occurred_at >= ?");
+    params.push(filters.start);
+  }
+  if (filters.end) {
+    conditions.push("occurred_at <= ?");
+    params.push(filters.end);
+  }
+  if (filters.since) {
+    conditions.push("occurred_at > ?");
+    params.push(filters.since);
+  }
+  const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
+  const order = filters.order === "asc" ? "ASC" : "DESC";
   const rows = db.prepare(`
-    SELECT * FROM events ORDER BY occurred_at DESC LIMIT ?
-  `).all(Math.max(1, Math.min(Number(limit) || 100, 1000)));
+    SELECT * FROM events ${where} ORDER BY occurred_at ${order} LIMIT ?
+  `).all(...params, clampLimit(filters.limit, 1000, 20000));
   return rows.map(rowToEvent);
 }
 

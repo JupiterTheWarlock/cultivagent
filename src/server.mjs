@@ -44,7 +44,7 @@ export function createCultivagentServer(options = {}) {
       }
 
       if (req.method === "GET" && url.pathname === "/api/events") {
-        return json(res, 200, { events: listEvents(db, url.searchParams.get("limit")) });
+        return json(res, 200, { events: listEvents(db, eventFilters(url.searchParams)) });
       }
       if (req.method === "GET" && url.pathname === "/api/daily") {
         return json(res, 200, { daily: listDaily(db, url.searchParams.get("day")) });
@@ -150,6 +150,17 @@ function statsFilters(params) {
     hook_type: emptyToUndefined(params.get("hook_type") ?? params.get("hookType")),
     machine: emptyToUndefined(params.get("machine")),
     limit: params.get("limit"),
+  };
+}
+
+function eventFilters(params) {
+  const ranged = params.has("start") || params.has("end") || params.has("since");
+  return {
+    start: dateParam(params.get("start")),
+    end: dateParam(params.get("end")),
+    since: dateParam(params.get("since")),
+    limit: params.get("limit"),
+    order: ranged ? "asc" : "desc",
   };
 }
 

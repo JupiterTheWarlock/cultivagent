@@ -170,6 +170,13 @@ try {
   assert.notEqual(otelEvent.host_id, "local");
   assert.equal(otelEvent.meta.machine_name, hostname());
 
+  const rangedEvents = await get(`${base}/api/events?start=2026-07-01T00:00:30.000Z&end=2026-07-01T00:01:30.000Z&limit=20`);
+  assert.equal(rangedEvents.events.some((x) => x.event_id === "smoke-hook-1"), true);
+  assert.equal(rangedEvents.events.some((x) => x.event_id === "smoke-1"), false);
+  const incrementalEvents = await get(`${base}/api/events?since=2026-07-01T00:00:30.000Z&limit=20`);
+  assert.equal(incrementalEvents.events.some((x) => x.event_id === "smoke-hook-1"), true);
+  assert.equal(incrementalEvents.events.some((x) => x.event_id === "smoke-1"), false);
+
   await new Promise((resolve) => setTimeout(resolve, 140));
   const pool = await get(`${base}/api/pool`);
   assert.equal(pool.events.length, 0);
