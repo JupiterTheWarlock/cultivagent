@@ -51,12 +51,7 @@ Manual: `claude plugin marketplace add <repo>/plugins` → `claude plugin instal
 bash <(curl -fsSL https://raw.githubusercontent.com/JupiterTheWarlock/cultivagent/main/plugins/codex/setup-helper/install.sh)
 ```
 
-Codex 0.130 does not inject a plugin-root env var, so the installer copies the plugin and renders `__CULTIVAGENT_PLUGIN_ROOT__` into an absolute path. See [plugins/codex/README.md](../plugins/codex/README.md). For authoritative token totals, also export Codex OTel:
-
-```bash
-export OTEL_EXPORTER_OTLP_LOGS_ENDPOINT=https://your-server/otel/v1/logs
-export OTEL_EXPORTER_OTLP_PROTOCOL=http/json
-```
+Codex 0.130 does not inject a plugin-root env var, so the installer copies the plugin and renders `__CULTIVAGENT_PLUGIN_ROOT__` into an absolute path. On Linux it also installs `cultivagent-codex-session-collector.timer`, which reads Codex session JSONL token counters so `codex exec` usage is captured even when plugin hooks do not fire. See [plugins/codex/README.md](../plugins/codex/README.md).
 
 ### OpenCode
 

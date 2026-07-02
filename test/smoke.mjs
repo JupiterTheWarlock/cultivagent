@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { hostname, tmpdir } from "node:os";
 import { join } from "node:path";
 import { createCultivagentServer } from "../src/server.mjs";
 import { normalizeEvent, translateLoopEvent } from "../src/normalize.mjs";
+import { collectSessionEventsFromFile } from "../plugins/codex/scripts/session-collector.mjs";
 
 const dir = mkdtempSync(join(tmpdir(), "cultivagent-"));
 const dbPath = join(dir, "test.sqlite");
@@ -142,6 +143,41 @@ try {
   assert.equal(openClawUsage.total_tokens, 10);
   assert.equal(normalizeEvent({ meta: { machine_name: "HOST" } }).username, "HOST");
   assert.equal(normalizeEvent({ username: "desk", meta: { machine_name: "HOST" } }).username, "desk");
+
+  const codexSessionPath = join(dir, "codex-session.jsonl");
+  writeFileSync(codexSessionPath, [
+    JSON.stringify({
+      timestamp: "2026-07-01T00:03:00.000Z",
+      type: "session_meta",
+      payload: { session_id: "codex-session-1", cwd: "/tmp/project", source: "exec", model_provider: "openai", cli_version: "0.142.0" },
+    }),
+    JSON.stringify({
+      timestamp: "2026-07-01T00:03:01.000Z",
+      type: "turn_context",
+      payload: { turn_id: "turn-1", cwd: "/tmp/project", model: "gpt-5.5" },
+    }),
+    JSON.stringify({
+      timestamp: "2026-07-01T00:03:02.000Z",
+      type: "event_msg",
+      payload: {
+        type: "token_count",
+        info: { last_token_usage: { input_tokens: 10, cached_input_tokens: 4, output_tokens: 2, total_tokens: 12 } },
+      },
+    }),
+    JSON.stringify({
+      timestamp: "2026-07-01T00:03:03.000Z",
+      type: "event_msg",
+      payload: { type: "task_complete", turn_id: "turn-1", duration_ms: 123, time_to_first_token_ms: 45 },
+    }),
+  ].join("\n") + "\n");
+  const codexSessionEvents = collectSessionEventsFromFile(codexSessionPath, { machineName: "HOST", username: "desk" });
+  assert.equal(codexSessionEvents.length, 1);
+  assert.equal(codexSessionEvents[0].source_surface, "session_collector");
+  assert.equal(codexSessionEvents[0].username, "desk");
+  assert.equal(codexSessionEvents[0].usage.input_tokens, 6);
+  assert.equal(codexSessionEvents[0].usage.cache_read_tokens, 4);
+  assert.equal(codexSessionEvents[0].usage.output_tokens, 2);
+  assert.equal(codexSessionEvents[0].duration_ms, 123);
 
   // plugin hooks.json 合法性（取代已移除的 generate-hook-config 测试）
   const claudeHooks = JSON.parse(readFileSync(new URL("../plugins/claude-code/hooks/hooks.json", import.meta.url), "utf8"));
