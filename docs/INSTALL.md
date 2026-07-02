@@ -31,6 +31,33 @@ With a token set, every path except `GET /api/health` requires auth. Three forms
 
 See [docs/UBUNTU.md](UBUNTU.md) for systemd / reverse-proxy deployment.
 
+### Cloudflare Worker + D1 deployment
+
+The Worker runtime is API-compatible with the Node service and stores data in D1. It uses the same auth token and serves the same dashboard as static Worker assets.
+
+```bash
+npm install
+wrangler d1 create cultivagent
+```
+
+Copy the generated `database_id` into `wrangler.jsonc`, then run:
+
+```bash
+npm run worker:migrate:remote
+wrangler secret put CULTIVAGENT_TOKEN
+npm run worker:deploy
+```
+
+For a custom domain, add a route in `wrangler.jsonc`, for example:
+
+```jsonc
+"routes": [
+  { "pattern": "cv.example.com/*", "zone_name": "example.com" }
+]
+```
+
+`npm run worker:deploy` runs `worker:prepare` first, which copies `src/dashboard.html` to `worker/public/index.html` for Workers static assets.
+
 ## 2. Install an agent plugin
 
 Each agent has a one-line installer that writes `~/.cultivagent/config.json` (endpoint + token + optional username), clones the repo, and registers the plugin. Re-running is safe (idempotent). Non-interactive when piped (`curl | bash`) — uses env / existing config / defaults.

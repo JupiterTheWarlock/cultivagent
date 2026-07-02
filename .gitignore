@@ -1,6 +1,7 @@
 data/*.sqlite
 data/*.sqlite-*
 node_modules/
+worker/public/
 .env
 .DS_Store
 *.log

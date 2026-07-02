@@ -10,7 +10,12 @@
   "scripts": {
     "start": "node ./bin/cultivagent.mjs",
     "smoke": "node ./test/smoke.mjs",
-    "cli-smoke": "node ./scripts/cli-smoke.mjs"
+    "cli-smoke": "node ./scripts/cli-smoke.mjs",
+    "worker:prepare": "mkdir -p worker/public && cp src/dashboard.html worker/public/index.html",
+    "worker:dev": "npm run worker:prepare && wrangler dev",
+    "worker:deploy": "npm run worker:prepare && wrangler deploy",
+    "worker:migrate:local": "wrangler d1 migrations apply cultivagent --local",
+    "worker:migrate:remote": "wrangler d1 migrations apply cultivagent --remote"
   },
   "engines": {
     "node": ">=24.0.0"

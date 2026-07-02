@@ -1,0 +1,29 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "cultivagent",
+  "main": "worker/index.mjs",
+  "compatibility_date": "2026-07-02",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": true,
+  "routes": [
+    {
+      "pattern": "cv.jthewl.cc/*",
+      "zone_name": "jthewl.cc"
+    }
+  ],
+  "assets": {
+    "directory": "./worker/public",
+    "binding": "ASSETS"
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "cultivagent",
+      "database_id": "5d7ad210-e2d7-4111-8b38-e66b45446c3a",
+      "migrations_dir": "migrations"
+    }
+  ],
+  "observability": {
+    "enabled": true
+  }
+}

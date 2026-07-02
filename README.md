@@ -2,7 +2,7 @@
 
 Cultivagent is a small self-hosted, **pure passive** monitor for coding-agent hooks, CLI smoke checks, and token rollups.
 
-- Node.js HTTP service (built-in `node:sqlite`).
+- Node.js HTTP service (built-in `node:sqlite`) or Cloudflare Worker + D1.
 - In-memory TTL event pool for recent hook events.
 - Daily usage rollups.
 - Dashboard at `http://127.0.0.1:3737`.
@@ -56,6 +56,20 @@ CULTIVAGENT_TOKEN=$CULTIVAGENT_TOKEN npm start
 ```
 
 With a token set, every path except `GET /api/health` requires auth (`Authorization: Bearer <token>`, `x-cultivagent-token`, or the `cultivagent_token` cookie set by the dashboard login page).
+
+## Cloudflare Worker
+
+The Worker runtime serves the same dashboard and ingest/API surface using D1 for storage:
+
+```bash
+wrangler d1 create cultivagent
+# copy the database_id into wrangler.jsonc
+npm run worker:migrate:remote
+wrangler secret put CULTIVAGENT_TOKEN
+npm run worker:deploy
+```
+
+`npm run worker:prepare` copies `src/dashboard.html` into the Worker static assets directory before `wrangler dev` or `wrangler deploy`.
 
 ## API
 
