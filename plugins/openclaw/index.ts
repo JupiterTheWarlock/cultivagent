@@ -1,11 +1,13 @@
 import { definePluginEntry } from "openclaw/plugin-sdk/plugin-entry";
 import { readFileSync } from "node:fs";
-import { homedir } from "node:os";
+import { createHash } from "node:crypto";
+import { homedir, hostname } from "node:os";
 import { join } from "node:path";
 
 type CultivagentConfig = {
   endpoint?: string;
   token?: string;
+  username?: string;
 };
 
 type HookContext = {
@@ -34,7 +36,9 @@ function resolveIngestConfig() {
   endpoint = endpoint.replace(/\/$/, "");
   if (!endpoint.endsWith("/ingest")) endpoint += "/ingest";
   const token = process.env.CULTIVAGENT_TOKEN ?? cfg.token ?? "";
-  return { endpoint, token };
+  const machineName = hostname();
+  const username = process.env.CULTIVAGENT_USERNAME ?? cfg.username ?? machineName;
+  return { endpoint, token, machineName, username };
 }
 
 export default definePluginEntry({
@@ -78,11 +82,14 @@ export default definePluginEntry({
     ]) {
       api.on(name, async (event: any, ctx?: HookContext) => {
         const usage = pickUsage(event);
+        const { machineName, username } = resolveIngestConfig();
         await send({
           source_agent: "openclaw",
           source_surface: "plugin",
           event_type: name,
           occurred_at: new Date().toISOString(),
+          username,
+          host_id: hash(machineName),
           session_id: event?.sessionKey ?? event?.sessionId ?? ctx?.sessionKey ?? ctx?.sessionId ?? "unknown",
           turn_id: event?.turnId ?? event?.requestId ?? ctx?.runId ?? "",
           agent_id: event?.agentId ?? ctx?.agentId ?? "",
@@ -91,7 +98,7 @@ export default definePluginEntry({
           status: event?.error ? "error" : "ok",
           duration_ms: event?.durationMs ?? event?.duration_ms,
           usage,
-          meta: { raw_hook: name, openclaw_hook: name },
+          meta: { machine_name: machineName, username, raw_hook: name, openclaw_hook: name },
         });
       });
     }
@@ -165,4 +172,8 @@ async function send(body: Record<string, unknown>) {
   } finally {
     clearTimeout(timeout);
   }
+}
+
+function hash(value: unknown) {
+  return createHash("sha256").update(String(value ?? "")).digest("hex").slice(0, 16);
 }

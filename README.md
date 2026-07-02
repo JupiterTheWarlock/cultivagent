@@ -83,7 +83,7 @@ Implemented:
 
 - Local SQLite service + dashboard.
 - Auth: Bearer / `x-cultivagent-token` / login-page cookie (timing-safe) + `cultivagent token` generator.
-- `~/.cultivagent/config.json` shared config (env > config > default).
+- `~/.cultivagent/config.json` shared config (env > config > default), including optional per-machine `username`.
 - Event normalization and dedupe; daily token rollups; recent event TTL pool.
 - Claude Code plugin (local marketplace + hooks + install.sh + `< 2.0` legacy fallback).
 - Codex plugin (copy + render-on-install, `config.toml` wiring, install.sh; no wrapper needed).

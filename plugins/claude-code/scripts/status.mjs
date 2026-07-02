@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // /cultivagent-status —— 打印 plugin 状态：endpoint、token 预览、server 健康。
 import { readFileSync } from "node:fs";
-import { homedir } from "node:os";
+import { homedir, hostname } from "node:os";
 import { join } from "node:path";
 
 function loadConfig() {
@@ -15,9 +15,11 @@ function loadConfig() {
 const cfg = loadConfig();
 const endpoint = (process.env.CULTIVAGENT_ENDPOINT ?? cfg.endpoint ?? "http://127.0.0.1:3737").replace(/\/$/, "");
 const token = process.env.CULTIVAGENT_TOKEN ?? cfg.token ?? "";
+const username = process.env.CULTIVAGENT_USERNAME ?? cfg.username ?? hostname();
 
 console.log("cultivagent plugin status");
 console.log(`  endpoint: ${endpoint}`);
+console.log(`  username: ${username}`);
 console.log(`  token:    ${token ? token.slice(0, 6) + "…" + " (len " + token.length + ")" : "(none — local mode)"}`);
 
 try {

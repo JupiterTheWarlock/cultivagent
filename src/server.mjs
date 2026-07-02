@@ -143,6 +143,7 @@ function statsFilters(params) {
     start: dateParam(params.get("start")),
     end: dateParam(params.get("end")),
     agent: emptyToUndefined(params.get("agent")),
+    username: emptyToUndefined(params.get("username")),
     provider: emptyToUndefined(params.get("provider")),
     model: emptyToUndefined(params.get("model")),
     status: emptyToUndefined(params.get("status")),

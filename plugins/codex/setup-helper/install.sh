@@ -59,6 +59,7 @@ Env overrides:
   CULTIVAGENT_REPO_REF / _BRANCH  ref to checkout (default: main)
   CULTIVAGENT_ENDPOINT            non-interactive: server URL
   CULTIVAGENT_TOKEN               non-interactive: bearer token
+  CULTIVAGENT_USERNAME            optional username label (default: machine name)
   CODEX_CONFIG_FILE               codex config.toml path (default: ~/.codex/config.toml)
 
 Targets bash (Linux production + git-bash on Windows). Requires only git + node.
@@ -77,9 +78,11 @@ cfg_get() {
 write_config() {
   node -e '
     const fs = require("fs");
-    const [path, endpoint, token] = process.argv.slice(1);
-    fs.writeFileSync(path, JSON.stringify({ endpoint, token }, null, 2) + "\n");
-  ' "$CONFIG_FILE" "$1" "$2"
+    const [path, endpoint, token, username] = process.argv.slice(1);
+    const config = { endpoint, token };
+    if (username) config.username = username;
+    fs.writeFileSync(path, JSON.stringify(config, null, 2) + "\n");
+  ' "$CONFIG_FILE" "$1" "$2" "${3:-}"
   chmod 600 "$CONFIG_FILE" 2>/dev/null || true
 }
 
@@ -117,18 +120,21 @@ if [ "$RECONFIG" = yes ]; then
       [Rr]*)
         ask 'Server URL (https://...): '; read -r ENDPOINT
         ask 'Token (CULTIVAGENT_TOKEN, input hidden): '; read -r -s TOKEN; echo
+        ask 'Username label (blank = machine name): '; read -r USERNAME
         ;;
       *)
         ENDPOINT='http://127.0.0.1:3737'; TOKEN=''
+        ask 'Username label (blank = machine name): '; read -r USERNAME
         ;;
     esac
     [ -n "${ENDPOINT:-}" ] || { err 'endpoint required'; exit 1; }
   else
     ENDPOINT="${CULTIVAGENT_ENDPOINT:-http://127.0.0.1:3737}"
     TOKEN="${CULTIVAGENT_TOKEN:-}"
+    USERNAME="${CULTIVAGENT_USERNAME:-}"
     info "non-interactive: endpoint from env/default"
   fi
-  write_config "$ENDPOINT" "$TOKEN"
+  write_config "$ENDPOINT" "$TOKEN" "${USERNAME:-}"
   info "wrote $CONFIG_FILE"
 fi
 

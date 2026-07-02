@@ -330,12 +330,14 @@
     .title-icon.codex { background: rgba(148, 163, 184, 0.14); color: #d1d5db; }
     .title-icon.gemini { background: rgba(14, 165, 233, 0.12); color: #38bdf8; }
     .title-icon.opencode { background: rgba(168, 85, 247, 0.12); color: #c084fc; }
+    .title-icon.openclaw { background: rgba(239, 68, 68, 0.12); color: #f87171; }
     .metric-kicker { display: flex; align-items: center; gap: 6px; margin-bottom: 3px; color: var(--muted-foreground); font-size: 12px; font-weight: 650; }
     .app-label { font-weight: 750; color: var(--primary); }
     .app-label.claude { color: #f59e0b; }
     .app-label.codex { color: #d1d5db; }
     .app-label.gemini { color: #38bdf8; }
     .app-label.opencode { color: #c084fc; }
+    .app-label.openclaw { color: #f87171; }
     .dot { color: rgba(148, 163, 184, 0.36); }
     .big-number-row { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
     .big-number { font-size: clamp(26px, 4vw, 36px); line-height: 1; font-weight: 850; white-space: nowrap; }
@@ -440,6 +442,7 @@
       margin-bottom: 20px;
     }
     .global-toolbar .app-filter { margin-right: auto; }
+    #usernameSelect .select-trigger { width: 128px; }
     .request-dashboard { display: grid; gap: 32px; padding-bottom: 32px; }
 
     @media (min-width: 860px) {
@@ -448,7 +451,7 @@
       .hero-top { flex-direction: row; align-items: center; }
       .mini-grid { grid-template-columns: repeat(5, minmax(0, 1fr)); }
       .hit-card { grid-column: span 1; }
-      .request-dashboard .mini-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+      .request-dashboard .mini-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
       .two-col { grid-template-columns: 1fr 1fr; }
     }
     @media (max-width: 700px) {
@@ -494,6 +497,14 @@
     <!-- 全局过滤栏：使用/请求两面板共享（应用、刷新、日期范围） -->
     <div class="global-toolbar">
       <div class="app-filter" id="appFilter" aria-label="应用筛选"></div>
+
+      <div class="select-wrap" id="usernameSelect">
+        <button class="select-trigger" type="button" title="按用户筛选" aria-label="按用户筛选">
+          <span class="truncate select-label">全部用户</span>
+          <span class="chevron" data-icon="chevron-down"></span>
+        </button>
+        <div class="select-menu" role="listbox"></div>
+      </div>
 
       <div class="select-wrap" id="refreshSelect">
         <button class="select-trigger" type="button" title="自动刷新间隔" aria-label="自动刷新间隔">
@@ -629,7 +640,7 @@
 
           <div id="usageLogsPanel" class="usage-panel">
             <div class="table-wrap"><table>
-              <thead><tr><th>时间</th><th>Agent</th><th>供应商</th><th>请求模型</th><th>输入</th><th>输出</th><th>缓存命中</th><th>缓存创建</th><th>用时/首字</th><th>状态</th><th>来源</th></tr></thead>
+              <thead><tr><th>时间</th><th>Agent</th><th data-i18n="user">用户</th><th>供应商</th><th>请求模型</th><th>输入</th><th>输出</th><th>缓存命中</th><th>缓存创建</th><th>用时/首字</th><th>状态</th><th>来源</th></tr></thead>
               <tbody id="usageLogRows"></tbody>
             </table></div>
           </div>
@@ -704,7 +715,11 @@
                 <div class="mini-value" id="requestAgents">0</div>
               </div>
               <div class="mini-stat">
-                <div class="mini-label"><span class="mini-icon purple" data-icon="database"></span><span>机器数</span></div>
+                <div class="mini-label"><span class="mini-icon purple" data-icon="user"></span><span data-i18n="userCount">用户数</span></div>
+                <div class="mini-value" id="requestUsers">0</div>
+              </div>
+              <div class="mini-stat">
+                <div class="mini-label"><span class="mini-icon green" data-icon="database"></span><span>机器数</span></div>
                 <div class="mini-value" id="requestMachines">0</div>
               </div>
               <div class="mini-stat">
@@ -737,6 +752,7 @@
           <div class="tabs-head">
             <div class="tabs-list" role="tablist" aria-label="Request table tabs">
               <button class="tab-trigger" type="button" data-rtab="logs"><span data-icon="activity"></span>请求日志</button>
+              <button class="tab-trigger" type="button" data-rtab="users"><span data-icon="user"></span><span data-i18n="user">用户</span></button>
               <button class="tab-trigger" type="button" data-rtab="machines"><span data-icon="database"></span>机器</button>
               <button class="tab-trigger" type="button" data-rtab="hooks"><span data-icon="list-filter"></span>Hook 类型</button>
             </div>
@@ -745,8 +761,14 @@
 
           <div id="requestLogsPanel" class="request-panel">
             <div class="table-wrap"><table>
-              <thead><tr><th>时间</th><th>Agent</th><th data-i18n="machine">机器名</th><th data-i18n="hookType">Hook 类型</th></tr></thead>
+              <thead><tr><th>时间</th><th>Agent</th><th data-i18n="user">用户</th><th data-i18n="machine">机器名</th><th data-i18n="hookType">Hook 类型</th></tr></thead>
               <tbody id="requestRows"></tbody>
+            </table></div>
+          </div>
+          <div id="requestUsersPanel" class="request-panel hidden">
+            <div class="table-wrap"><table>
+              <thead><tr><th data-i18n="user">用户</th><th>请求数</th><th>占比</th></tr></thead>
+              <tbody id="usernameRows"></tbody>
             </table></div>
           </div>
           <div id="requestMachinesPanel" class="request-panel hidden">
@@ -782,6 +804,7 @@
       'list-filter': '<svg class="icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M7 12h10"/><path d="M10 18h4"/></svg>',
       'refresh-cw': '<svg class="icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 0 1 15.74-5.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-15.74 5.74L3 16"/><path d="M8 16H3v5"/></svg>',
       'sparkles': '<svg class="icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m12 3-1.9 5.8a2 2 0 0 1-1.3 1.3L3 12l5.8 1.9a2 2 0 0 1 1.3 1.3L12 21l1.9-5.8a2 2 0 0 1 1.3-1.3L21 12l-5.8-1.9a2 2 0 0 1-1.3-1.3Z"/></svg>',
+      'user': '<svg class="icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21a7 7 0 0 0-14 0"/><circle cx="12" cy="7" r="4"/></svg>',
       'zap': '<svg class="icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 14a1 1 0 0 1-.78-1.63l9.9-10.2a.5.5 0 0 1 .86.46l-1.92 6.02A1 1 0 0 0 13 10h7a1 1 0 0 1 .78 1.63l-9.9 10.2a.5.5 0 0 1-.86-.46l1.92-6.02A1 1 0 0 0 11 14z"/></svg>'
     };
 
@@ -789,7 +812,8 @@
       claude: '<span class="brand-icon"><svg height="16" viewBox="0 0 24 24" width="16" xmlns="http://www.w3.org/2000/svg"><path d="M4.709 15.955l4.72-2.647.08-.23-.08-.128H9.2l-.79-.048-2.698-.073-2.339-.097-2.266-.122-.571-.121L0 11.784l.055-.352.48-.321.686.06 1.52.103 2.278.158 1.652.097 2.449.255h.389l.055-.157-.134-.098-.103-.097-2.358-1.596-2.552-1.688-1.336-.972-.724-.491-.364-.462-.158-1.008.656-.722.881.06.225.061.893.686 1.908 1.476 2.491 1.833.365.304.145-.103.019-.073-.164-.274-1.355-2.446-1.446-2.49-.644-1.032-.17-.619a2.97 2.97 0 01-.104-.729L6.283.134 6.696 0l.996.134.42.364.62 1.414 1.002 2.229 1.555 3.03.456.898.243.832.091.255h.158V9.01l.128-1.706.237-2.095.23-2.695.08-.76.376-.91.747-.492.584.28.48.685-.067.444-.286 1.851-.559 2.903-.364 1.942h.212l.243-.242.985-1.306 1.652-2.064.73-.82.85-.904.547-.431h1.033l.76 1.129-.34 1.166-1.064 1.347-.881 1.142-1.264 1.7-.79 1.36.073.11.188-.02 2.856-.606 1.543-.28 1.841-.315.833.388.091.395-.328.807-1.969.486-2.309.462-3.439.813-.042.03.049.061 1.549.146.662.036h1.622l3.02.225.79.522.474.638-.079.485-1.215.62-1.64-.389-3.829-.91-1.312-.329h-.182v.11l1.093 1.068 2.006 1.81 2.509 2.33.127.578-.322.455-.34-.049-2.205-1.657-.851-.747-1.926-1.62h-.128v.17l.444.649 2.345 3.521.122 1.08-.17.353-.608.213-.668-.122-1.374-1.925-1.415-2.167-1.143-1.943-.14.08-.674 7.254-.316.37-.729.28-.607-.461-.322-.747.322-1.476.389-1.924.315-1.53.286-1.9.17-.632-.012-.042-.14.018-1.434 1.967-2.18 2.945-1.726 1.845-.414.164-.717-.37.067-.662.401-.589 2.388-3.036 1.44-1.882.93-1.086-.006-.158h-.055L4.132 18.56l-1.13.146-.487-.456.061-.746.231-.243 1.908-1.312-.006.006z" fill="#D97757" fill-rule="nonzero"></path></svg></span>',
       openai: '<span class="brand-icon brand-openai"><svg fill="currentColor" fill-rule="evenodd" height="16" viewBox="0 0 24 24" width="16" xmlns="http://www.w3.org/2000/svg"><path d="M21.55 10.004a5.416 5.416 0 00-.478-4.501c-1.217-2.09-3.662-3.166-6.05-2.66A5.59 5.59 0 0010.831 1C8.39.995 6.224 2.546 5.473 4.838A5.553 5.553 0 001.76 7.496a5.487 5.487 0 00.691 6.5 5.416 5.416 0 00.477 4.502c1.217 2.09 3.662 3.165 6.05 2.66A5.586 5.586 0 0013.168 23c2.443.006 4.61-1.546 5.361-3.84a5.553 5.553 0 003.715-2.66 5.488 5.488 0 00-.693-6.497v.001zm-8.381 11.558a4.199 4.199 0 01-2.675-.954c.034-.018.093-.05.132-.074l4.44-2.53a.71.71 0 00.364-.623v-6.176l1.877 1.069c.02.01.033.029.036.05v5.115c-.003 2.274-1.87 4.118-4.174 4.123zM4.192 17.78a4.059 4.059 0 01-.498-2.763c.032.02.09.055.131.078l4.44 2.53c.225.13.504.13.73 0l5.42-3.088v2.138a.068.068 0 01-.027.057L9.9 19.288c-1.999 1.136-4.552.46-5.707-1.51h-.001zM3.023 8.216A4.15 4.15 0 015.198 6.41l-.002.151v5.06a.711.711 0 00.364.624l5.42 3.087-1.876 1.07a.067.067 0 01-.063.005l-4.489-2.559c-1.995-1.14-2.679-3.658-1.53-5.63h.001zm15.417 3.54l-5.42-3.088L14.896 7.6a.067.067 0 01.063-.006l4.489 2.557c1.998 1.14 2.683 3.662 1.529 5.633a4.163 4.163 0 01-2.174 1.807V12.38a.71.71 0 00-.363-.623zm1.867-2.773a6.04 6.04 0 00-.132-.078l-4.44-2.53a.731.731 0 00-.729 0l-5.42 3.088V7.325a.068.068 0 01.027-.057L14.1 4.713c2-1.137 4.555-.46 5.707 1.513.487.833.664 1.809.499 2.757h.001zm-11.741 3.81l-1.877-1.068a.065.065 0 01-.036-.051V6.559c.001-2.277 1.873-4.122 4.181-4.12.976 0 1.92.338 2.671.954-.034.018-.092.05-.131.073l-4.44 2.53a.71.71 0 00-.365.623l-.003 6.173v.002zm1.02-2.168L12 9.25l2.414 1.375v2.75L12 14.75l-2.415-1.375v-2.75z"></path></svg></span>',
       gemini: '<span class="brand-icon"><svg height="16" viewBox="0 0 24 24" width="16" xmlns="http://www.w3.org/2000/svg"><path d="M20.616 10.835a14.147 14.147 0 01-4.45-3.001 14.111 14.111 0 01-3.678-6.452.503.503 0 00-.975 0 14.134 14.134 0 01-3.679 6.452 14.155 14.155 0 01-4.45 3.001c-.65.28-1.318.505-2.002.678a.502.502 0 000 .975c.684.172 1.35.397 2.002.677a14.147 14.147 0 014.45 3.001 14.112 14.112 0 013.679 6.453.502.502 0 00.975 0c.172-.685.397-1.351.677-2.003a14.145 14.145 0 013.001-4.45 14.113 14.113 0 016.453-3.678.503.503 0 000-.975 13.245 13.245 0 01-2.003-.678z" fill="#3186FF"></path></svg></span>',
-      opencode: '<span class="brand-icon"><svg width="13" height="16" viewBox="0 0 240 300" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M180 240H60V120H180V240Z" fill="#CFCECD"/><path d="M180 60H60V240H180V60ZM240 300H0V0H240V300Z" fill="#F8FAFC"/></svg></span>'
+      opencode: '<span class="brand-icon"><svg width="13" height="16" viewBox="0 0 240 300" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M180 240H60V120H180V240Z" fill="#CFCECD"/><path d="M180 60H60V240H180V60ZM240 300H0V0H240V300Z" fill="#F8FAFC"/></svg></span>',
+      openclaw: '<span class="brand-icon"><svg viewBox="0 0 120 120" width="16" height="16" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M60 10C30 10 15 35 15 55c0 20 15 40 30 45v10h10v-10c3 1 7 2 10 0v10h10v-10c15-5 30-25 30-45 0-20-15-45-45-45Z" fill="#ef4444"/><path d="M20 45C5 40 0 50 5 60c5 10 15 5 20-5 3-7 0-10-5-10ZM100 45c15-5 20 5 15 15s-15 5-20-5c-3-7 0-10 5-10Z" fill="#dc2626"/><path d="M45 15Q35 5 30 8M75 15Q85 5 90 8" stroke="#f87171" stroke-width="3" stroke-linecap="round"/><circle cx="45" cy="35" r="6" fill="#050810"/><circle cx="75" cy="35" r="6" fill="#050810"/><circle cx="46" cy="34" r="2.5" fill="#22d3ee"/><circle cx="76" cy="34" r="2.5" fill="#22d3ee"/></svg></span>'
     };
 
     const APP_FILTER_OPTIONS = [
@@ -797,19 +821,21 @@
       { type: 'claude', agent: 'claude-code', label: 'Claude Code', icon: BRAND.claude },
       { type: 'codex', agent: 'codex', label: 'Codex', icon: BRAND.openai },
       { type: 'gemini', agent: 'gemini', label: 'Gemini', icon: BRAND.gemini },
-      { type: 'opencode', agent: 'opencode', label: 'OpenCode', icon: BRAND.opencode }
+      { type: 'opencode', agent: 'opencode', label: 'OpenCode', icon: BRAND.opencode },
+      { type: 'openclaw', agent: 'openclaw', label: 'OpenClaw', icon: BRAND.openclaw }
     ];
     const REFRESH_INTERVAL_OPTIONS_MS = [0, 5000, 10000, 30000, 60000];
     const PRESETS = ['today', '1d', '7d', '14d', '30d'];
     const PRESET_LABELS = { today: '当天', '1d': '1d', '7d': '7d', '14d': '14d', '30d': '30d', custom: '日历筛选' };
     const i18n = {
-      zh: { allSources: '全部来源', allModels: '全部模型', allHooks: '全部 Hook', allMachines: '全部机器', filterBySource: '按来源筛选', filterByModel: '按模型筛选', filterByHook: '按 Hook 类型筛选', filterByMachine: '按机器筛选', refreshOff: '关闭', customRangeHint: '支持日期与时间', startTime: '开始时间', endTime: '结束时间', liveEndTime: '结束时间跟随当前时刻', cancel: '取消', confirm: '确认', noData: '暂无数据', now: '现在' },
-      en: { allSources: 'All Sources', allModels: 'All Models', allHooks: 'All Hooks', allMachines: 'All Machines', filterBySource: 'Filter by source', filterByModel: 'Filter by model', filterByHook: 'Filter by hook type', filterByMachine: 'Filter by machine', refreshOff: 'Off', customRangeHint: 'Supports date and time', startTime: 'Start Time', endTime: 'End Time', liveEndTime: 'End time follows now', cancel: 'Cancel', confirm: 'Confirm', noData: 'No data', now: 'Now' }
+      zh: { allSources: '全部来源', allModels: '全部模型', allHooks: '全部 Hook', allMachines: '全部机器', allUsers: '全部用户', filterBySource: '按来源筛选', filterByModel: '按模型筛选', filterByHook: '按 Hook 类型筛选', filterByMachine: '按机器筛选', filterByUser: '按用户筛选', user: '用户', userCount: '用户数', refreshOff: '关闭', customRangeHint: '支持日期与时间', startTime: '开始时间', endTime: '结束时间', liveEndTime: '结束时间跟随当前时刻', cancel: '取消', confirm: '确认', noData: '暂无数据', now: '现在' },
+      en: { allSources: 'All Sources', allModels: 'All Models', allHooks: 'All Hooks', allMachines: 'All Machines', allUsers: 'All Users', filterBySource: 'Filter by source', filterByModel: 'Filter by model', filterByHook: 'Filter by hook type', filterByMachine: 'Filter by machine', filterByUser: 'Filter by user', user: 'User', userCount: 'Users', refreshOff: 'Off', customRangeHint: 'Supports date and time', startTime: 'Start Time', endTime: 'End Time', liveEndTime: 'End time follows now', cancel: 'Cancel', confirm: 'Confirm', noData: 'No data', now: 'Now' }
     };
     const state = {
       lang: localStorage.getItem('cultivagent_lang') || 'zh',
       mode: 'usage',
       appType: 'all',
+      username: undefined,
       provider: undefined,
       model: undefined,
       hookType: undefined,
@@ -849,7 +875,8 @@
       const usageOptionQueryString = usageQuery({ provider: false, model: false }).toString();
       const modelOptionQueryString = usageQuery({ model: false }).toString();
       const requestQueryString = requestQuery().toString();
-      const [health, summary, trends, providers, models, logs, providerOptions, modelOptions, requestStats] = await Promise.all([
+      const requestOptionQueryString = requestQuery({ username: false }).toString();
+      const [health, summary, trends, providers, models, logs, providerOptions, modelOptions, requestStats, requestOptionStats] = await Promise.all([
         get('/api/health'),
         get('/api/usage/summary?' + usageQueryString),
         get('/api/usage/trends?' + usageQueryString),
@@ -858,10 +885,15 @@
         get('/api/usage/logs?pageSize=100&' + usageQueryString),
         get('/api/usage/providers?' + usageOptionQueryString),
         get('/api/usage/models?' + modelOptionQueryString),
-        get('/api/request-stats?limit=100&' + requestQueryString)
+        get('/api/request-stats?limit=100&' + requestQueryString),
+        get('/api/request-stats?limit=100&' + requestOptionQueryString)
       ]);
 
       document.getElementById('health').textContent = health.ok ? 'online' : 'offline';
+      renderUsageSelect('usernameSelect', state.username, requestOptionStats.by_username.map((x) => x.username), dict('allUsers'), dict('filterByUser'), (value) => {
+        state.username = value;
+        refresh();
+      });
       renderUsageSelect('providerSelect', state.provider, providerOptions.providers.map((x) => x.provider), dict('allSources'), dict('filterBySource'), (value) => {
         state.provider = value;
         state.model = undefined;
@@ -964,7 +996,7 @@
       document.getElementById('usageCacheHitRate').textContent = hit.toFixed(hit >= 99.95 ? 0 : 1) + '%';
       document.getElementById('cacheHitBar').style.width = Math.max(0, Math.min(100, hit)) + '%';
       drawUsageChart(trends);
-      document.getElementById('usageLogRows').innerHTML = logs.length ? logs.map(usageLogRow).join('') : emptyRow(11);
+      document.getElementById('usageLogRows').innerHTML = logs.length ? logs.map(usageLogRow).join('') : emptyRow(12);
       document.getElementById('usageProviderRows').innerHTML = providers.length ? providers.map(providerRow).join('') : emptyRow(5);
       document.getElementById('usageModelRows').innerHTML = models.length ? models.map(modelRow).join('') : emptyRow(3);
     }
@@ -988,21 +1020,23 @@
       const days = Math.max(1, (resolved.endDate - resolved.startDate) / 86400);
       document.getElementById('requestDailyAvg').textContent = nf().format(Math.round(total / days));
 
-      // mini-grid：Agent / 机器 / Hook 类型
+      // mini-grid：Agent / 用户 / 机器 / Hook 类型
       document.getElementById('requestAgents').textContent = nf().format(stats.summary.agents || 0);
+      document.getElementById('requestUsers').textContent = nf().format(stats.summary.users || 0);
       document.getElementById('requestMachines').textContent = nf().format(stats.summary.machines || 0);
       document.getElementById('requestHookTypes').textContent = nf().format(stats.summary.hook_types || 0);
 
       document.getElementById('requestTotalRecords').textContent = nf().format(total);
       drawRequestChart(stats.trend);
-      document.getElementById('requestRows').innerHTML = stats.requests.length ? stats.requests.map(requestRow).join('') : emptyRow(4);
+      document.getElementById('requestRows').innerHTML = stats.requests.length ? stats.requests.map(requestRow).join('') : emptyRow(5);
+      document.getElementById('usernameRows').innerHTML = stats.by_username.length ? stats.by_username.map((x) => countRowWithRate(x.username, x.count, total)).join('') : emptyRow(3);
       document.getElementById('hookRows').innerHTML = stats.by_hook_type.length ? stats.by_hook_type.map((x) => countRowWithRate(x.hook_type, x.count, total)).join('') : emptyRow(3);
       document.getElementById('machineRows').innerHTML = stats.by_machine.length ? stats.by_machine.map((x) => countRowWithRate(x.machine, x.count, total)).join('') : emptyRow(3);
     }
 
     function usageLogRow(log) {
       const statusClass = log.status === 'error' ? 'bad' : 'ok';
-      return '<tr><td>' + esc(timeLabel(log.time)) + '</td><td>' + esc(agentLabel(log.agent)) + '</td><td>' + esc(log.provider) + '</td><td class="mono">' + esc(log.model) + '</td><td>' + nf().format(log.input_tokens || 0) + '</td><td>' + nf().format(log.output_tokens || 0) + '</td><td>' + nf().format(log.cache_read_tokens || 0) + '</td><td>' + nf().format(log.cache_write_tokens || 0) + '</td><td>' + latencyLabel(log.latency_ms) + '</td><td class="' + statusClass + '">' + esc(log.status) + '</td><td>' + esc(log.source) + '</td></tr>';
+      return '<tr><td>' + esc(timeLabel(log.time)) + '</td><td>' + esc(agentLabel(log.agent)) + '</td><td>' + esc(log.username) + '</td><td>' + esc(log.provider) + '</td><td class="mono">' + esc(log.model) + '</td><td>' + nf().format(log.input_tokens || 0) + '</td><td>' + nf().format(log.output_tokens || 0) + '</td><td>' + nf().format(log.cache_read_tokens || 0) + '</td><td>' + nf().format(log.cache_write_tokens || 0) + '</td><td>' + latencyLabel(log.latency_ms) + '</td><td class="' + statusClass + '">' + esc(log.status) + '</td><td>' + esc(log.source) + '</td></tr>';
     }
 
     function providerRow(row) {
@@ -1014,7 +1048,7 @@
     }
 
     function requestRow(row) {
-      return '<tr><td>' + esc(timeLabel(row.time)) + '</td><td>' + esc(agentLabel(row.agent)) + '</td><td>' + esc(row.machine) + '</td><td><span class="pill">' + esc(row.hook_type) + '</span></td></tr>';
+      return '<tr><td>' + esc(timeLabel(row.time)) + '</td><td>' + esc(agentLabel(row.agent)) + '</td><td>' + esc(row.username) + '</td><td>' + esc(row.machine) + '</td><td><span class="pill">' + esc(row.hook_type) + '</span></td></tr>';
     }
 
     function countRow(label, count) {
@@ -1034,15 +1068,17 @@
       const params = rangeParams();
       const app = APP_FILTER_OPTIONS.find((x) => x.type === state.appType);
       if (app?.agent) params.set('agent', app.agent);
+      if (state.username) params.set('username', state.username);
       if (options.provider !== false && state.provider) params.set('provider', state.provider);
       if (options.model !== false && state.model) params.set('model', state.model);
       return params;
     }
 
-    function requestQuery() {
+    function requestQuery(options = {}) {
       const params = rangeParams();
       const app = APP_FILTER_OPTIONS.find((x) => x.type === state.appType);
       if (app?.agent) params.set('agent', app.agent);
+      if (options.username !== false && state.username) params.set('username', state.username);
       if (state.hookType) params.set('hook_type', state.hookType);
       if (state.machine) params.set('machine', state.machine);
       return params;

@@ -32,6 +32,12 @@ export function normalizeEvent(input = {}, defaults = {}) {
     input.machine_name ?? input.machineName ?? input.host_name ?? input.hostName ??
     inputMeta.machine_name ?? defaultMeta.machine_name ?? hostname()
   );
+  const username = cleanId(
+    input.username ?? input.user_name ?? input.userName ??
+    inputMeta.username ?? inputMeta.user_name ??
+    defaultMeta.username ?? defaultMeta.user_name ??
+    machineName
+  );
   const hostId = cleanId(input.host_id ?? defaults.host_id ?? shortHash(machineName));
   const workspaceId = cleanId(input.workspace_id ?? input.cwd ?? defaults.workspace_id ?? "default");
   const sessionId = cleanId(input.session_id ?? input.sessionId ?? defaults.session_id ?? "unknown");
@@ -45,6 +51,7 @@ export function normalizeEvent(input = {}, defaults = {}) {
     ...defaultMeta,
     ...inputMeta,
     machine_name: inputMeta.machine_name ?? defaultMeta.machine_name ?? machineName,
+    username: inputMeta.username ?? defaultMeta.username ?? username,
     loop_event: input.loop_event ?? loop.loop_event,
     agent_status: input.agent_status ?? loop.agent_status,
     event_role: input.event_role ?? loop.event_role,
@@ -55,6 +62,7 @@ export function normalizeEvent(input = {}, defaults = {}) {
     sourceSurface,
     eventType,
     occurred_at: occurredAt.toISOString(),
+    username,
     hostId,
     workspaceId,
     sessionId,
@@ -76,6 +84,7 @@ export function normalizeEvent(input = {}, defaults = {}) {
     event_type: eventType,
     occurred_at: occurredAt.toISOString(),
     day: occurredAt.toISOString().slice(0, 10),
+    username,
     host_id: hostId,
     workspace_id: workspaceId,
     session_id: sessionId,
@@ -114,6 +123,8 @@ export function normalizeOtelLogs(body, defaults = {}) {
           source_surface: "otel",
           event_type: otelEventType(agent, name, kind, usage),
           occurred_at: nanosToDate(logRecord.timeUnixNano) ?? attrs["event.timestamp"],
+          username: attrs["cultivagent.username"] ?? attrs.username ?? attrs["user.name"] ?? attrs["host.name"],
+          machine_name: attrs["host.name"],
           host_id: attrs["host.id"] ?? attrs["host.name"],
           workspace_id: attrs["workspace.id"] ?? attrs["workspace.path"],
           session_id: attrs["session.id"] ?? attrs["conversation.id"],
@@ -163,6 +174,8 @@ export function normalizeOtelMetrics(body, defaults = {}) {
             source_surface: "otel",
             event_type: metric.name,
             occurred_at: nanosToDate(point.timeUnixNano) ?? new Date(),
+            username: attrs["cultivagent.username"] ?? attrs.username ?? attrs["user.name"] ?? attrs["host.name"],
+            machine_name: attrs["host.name"],
             host_id: attrs["host.id"] ?? attrs["host.name"],
             workspace_id: attrs["workspace.id"] ?? attrs["workspace.path"],
             session_id: attrs["session.id"],

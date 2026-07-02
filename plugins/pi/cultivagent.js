@@ -1,7 +1,8 @@
 // Cultivagent extension for Pi. Forwards pi events to POST /ingest.
 // 配置：env (CULTIVAGENT_ENDPOINT/CULTIVAGENT_TOKEN) > ~/.cultivagent/config.json > 默认本地。
 import { readFileSync } from "node:fs";
-import { homedir } from "node:os";
+import { createHash } from "node:crypto";
+import { homedir, hostname } from "node:os";
 import { join } from "node:path";
 
 function loadConfig() {
@@ -17,6 +18,8 @@ let endpoint = process.env.CULTIVAGENT_ENDPOINT ?? cfg.endpoint ?? "http://127.0
 endpoint = endpoint.replace(/\/$/, "");
 if (!endpoint.endsWith("/ingest")) endpoint += "/ingest";
 const token = process.env.CULTIVAGENT_TOKEN ?? cfg.token ?? "";
+const machineName = hostname();
+const username = process.env.CULTIVAGENT_USERNAME ?? cfg.username ?? machineName;
 
 export default function cultivagent(pi) {
   for (const eventName of [
@@ -56,6 +59,8 @@ export default function cultivagent(pi) {
         source_surface: "extension",
         event_type: eventName,
         occurred_at: new Date().toISOString(),
+        username,
+        host_id: hash(machineName),
         session_id: event?.sessionId ?? "unknown",
         turn_id: event?.turnIndex == null ? "" : String(event.turnIndex),
         model: event?.model?.id ?? "unknown",
@@ -67,7 +72,7 @@ export default function cultivagent(pi) {
           total_tokens: messageUsage.totalTokens ?? messageUsage.total_tokens ?? 0,
           cost_usd: messageUsage.cost?.total ?? null,
         },
-        meta: { raw_hook: eventName, pi_event: eventName },
+        meta: { machine_name: machineName, username, raw_hook: eventName, pi_event: eventName },
       });
       if (eventName === "project_trust") return { trusted: "undecided" };
     });
@@ -79,4 +84,8 @@ async function send(body) {
   if (token) headers.authorization = `Bearer ${token}`;
   const response = await fetch(endpoint, { method: "POST", headers, body: JSON.stringify(body) });
   if (!response.ok) console.error(`[cultivagent] ingest failed: ${response.status}`);
+}
+
+function hash(value) {
+  return createHash("sha256").update(String(value ?? "")).digest("hex").slice(0, 16);
 }

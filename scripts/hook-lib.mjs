@@ -39,12 +39,15 @@ export async function sendEvent(event) {
 
 export function baseEvent(agent, hookInput, eventType = "hook_event") {
   const hookEvent = hookInput.hook_event ?? hookInput.hookEventName ?? hookInput.hook_event_name ?? hookInput.event ?? hookInput.type ?? eventType;
+  const machineName = hostname();
+  const username = resolveUsername(machineName);
   return {
     source_agent: agent,
     source_surface: "hook",
     event_type: String(hookEvent),
     occurred_at: new Date().toISOString(),
-    host_id: hash(hostname()),
+    username,
+    host_id: hash(machineName),
     workspace_id: hash(hookInput.cwd ?? process.cwd()),
     session_id: hookInput.session_id ?? hookInput.sessionId ?? hookInput.conversation_id ?? "unknown",
     turn_id: hookInput.prompt_id ?? hookInput.promptId ?? hookInput.turn_id ?? "",
@@ -53,11 +56,17 @@ export function baseEvent(agent, hookInput, eventType = "hook_event") {
     provider: hookInput.provider ?? "unknown",
     status: hookInput.status ?? "ok",
     meta: {
-      machine_name: hostname(),
+      machine_name: machineName,
+      username,
       hook_event: hookEvent,
       tool_name: hookInput.tool_name ?? hookInput.toolName ?? "",
     },
   };
+}
+
+export function resolveUsername(machineName = hostname()) {
+  const cfg = loadConfig();
+  return process.env.CULTIVAGENT_USERNAME ?? cfg.username ?? machineName;
 }
 
 export function hash(value) {

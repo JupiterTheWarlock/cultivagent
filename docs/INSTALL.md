@@ -33,7 +33,7 @@ See [docs/UBUNTU.md](UBUNTU.md) for systemd / reverse-proxy deployment.
 
 ## 2. Install an agent plugin
 
-Each agent has a one-line installer that writes `~/.cultivagent/config.json` (endpoint + token), clones the repo, and registers the plugin. Re-running is safe (idempotent). Non-interactive when piped (`curl | bash`) — uses env / existing config / defaults.
+Each agent has a one-line installer that writes `~/.cultivagent/config.json` (endpoint + token + optional username), clones the repo, and registers the plugin. Re-running is safe (idempotent). Non-interactive when piped (`curl | bash`) — uses env / existing config / defaults.
 
 > Windows: run the installers under **git-bash** (the bash from Git for Windows).
 
@@ -81,6 +81,16 @@ Native plugin entry (TypeScript, build required). See [plugins/openclaw/README.m
 ## 3. Config priority
 
 All plugins resolve endpoint/token as: env (`CULTIVAGENT_ENDPOINT` / `CULTIVAGENT_TOKEN`) > `~/.cultivagent/config.json` > `http://127.0.0.1:3737` (no token).
+
+`username` defaults to the local machine hostname. To override the label for that machine, set `CULTIVAGENT_USERNAME` or add it to the shared config:
+
+```json
+{
+  "endpoint": "https://cultivagent.example.com",
+  "token": "<server token>",
+  "username": "workstation"
+}
+```
 
 ## API
 

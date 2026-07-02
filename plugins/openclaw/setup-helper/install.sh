@@ -6,6 +6,7 @@
 #   CULTIVAGENT_HOME      config root (default: ~/.cultivagent)
 #   CULTIVAGENT_ENDPOINT  server URL
 #   CULTIVAGENT_TOKEN     bearer token
+#   CULTIVAGENT_USERNAME  optional username label (default: machine name)
 
 set -euo pipefail
 
@@ -20,10 +21,12 @@ err() { printf 'xx  %s\n' "$*" >&2; }
 write_config() {
   node -e '
     const fs = require("node:fs");
-    const [path, endpoint, token] = process.argv.slice(1);
+    const [path, endpoint, token, username] = process.argv.slice(1);
+    const config = { endpoint, token };
+    if (username) config.username = username;
     fs.mkdirSync(require("node:path").dirname(path), { recursive: true });
-    fs.writeFileSync(path, JSON.stringify({ endpoint, token }, null, 2) + "\n");
-  ' "$CONFIG_FILE" "$1" "$2"
+    fs.writeFileSync(path, JSON.stringify(config, null, 2) + "\n");
+  ' "$CONFIG_FILE" "$1" "$2" "${3:-}"
   chmod 600 "$CONFIG_FILE" 2>/dev/null || true
 }
 
@@ -33,7 +36,7 @@ done
 
 mkdir -p "$CV_HOME"
 if [ ! -f "$CONFIG_FILE" ] || [ -n "${CULTIVAGENT_ENDPOINT:-}" ] || [ -n "${CULTIVAGENT_TOKEN:-}" ]; then
-  write_config "${CULTIVAGENT_ENDPOINT:-http://127.0.0.1:3737}" "${CULTIVAGENT_TOKEN:-}"
+  write_config "${CULTIVAGENT_ENDPOINT:-http://127.0.0.1:3737}" "${CULTIVAGENT_TOKEN:-}" "${CULTIVAGENT_USERNAME:-}"
   info "wrote $CONFIG_FILE"
 else
   info "using existing $CONFIG_FILE"

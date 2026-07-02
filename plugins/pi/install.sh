@@ -43,6 +43,7 @@ Cultivagent Pi extension installer.
 Env overrides:
   CULTIVAGENT_HOME / _REPO_DIR / _REPO_URL / _REPO_REF / _BRANCH
   CULTIVAGENT_ENDPOINT / _TOKEN      non-interactive config
+  CULTIVAGENT_USERNAME               optional username label (default: machine name)
   CULTIVAGENT_PI_SKIP_WRAPPER=1      skip writing the pi() shell wrapper
 EOF
     exit 0 ;;
@@ -54,9 +55,11 @@ cfg_get() {
 write_config() {
   node -e '
     const fs = require("fs");
-    const [path, endpoint, token] = process.argv.slice(2);
-    fs.writeFileSync(path, JSON.stringify({ endpoint, token }, null, 2) + "\n");
-  ' "$CONFIG_FILE" "$1" "$2"
+    const [path, endpoint, token, username] = process.argv.slice(1);
+    const config = { endpoint, token };
+    if (username) config.username = username;
+    fs.writeFileSync(path, JSON.stringify(config, null, 2) + "\n");
+  ' "$CONFIG_FILE" "$1" "$2" "${3:-}"
   chmod 600 "$CONFIG_FILE" 2>/dev/null || true
 }
 
@@ -84,13 +87,13 @@ if [ "$RC" = yes ]; then
   if [ "$INTERACTIVE" = 1 ]; then
     ask 'Deploy mode — (l)ocal http://127.0.0.1:3737 or (r)emote? [l/r] '; read -r MODE
     case "$MODE" in
-      [Rr]*) ask 'Server URL: '; read -r EP; ask 'Token (hidden): '; read -r -s TK; echo ;;
-      *) EP='http://127.0.0.1:3737'; TK='' ;;
+      [Rr]*) ask 'Server URL: '; read -r EP; ask 'Token (hidden): '; read -r -s TK; echo; ask 'Username label (blank = machine name): '; read -r USERNAME ;;
+      *) EP='http://127.0.0.1:3737'; TK=''; ask 'Username label (blank = machine name): '; read -r USERNAME ;;
     esac
   else
-    EP="${CULTIVAGENT_ENDPOINT:-http://127.0.0.1:3737}"; TK="${CULTIVAGENT_TOKEN:-}"
+    EP="${CULTIVAGENT_ENDPOINT:-http://127.0.0.1:3737}"; TK="${CULTIVAGENT_TOKEN:-}"; USERNAME="${CULTIVAGENT_USERNAME:-}"
   fi
-  write_config "$EP" "$TK"; info "wrote $CONFIG_FILE"
+  write_config "$EP" "$TK" "${USERNAME:-}"; info "wrote $CONFIG_FILE"
 fi
 
 # 3. repo
@@ -117,7 +120,7 @@ else
   if [ -f "$RC_FILE" ]; then
     node -e '
       const fs = require("fs");
-      const [rc, begin, end] = process.argv.slice(2);
+      const [rc, begin, end] = process.argv.slice(1);
       let txt = fs.readFileSync(rc, "utf8");
       const re = new RegExp(begin + "[\\s\\S]*?" + end + "\\n?", "g");
       txt = txt.replace(re, "");

@@ -95,12 +95,19 @@ try {
 
   const requestStats = await get(`${base}/api/request-stats?limit=20`);
   assert.equal(requestStats.summary.total_requests, 6);
+  assert.equal(requestStats.summary.users, 2);
   const hookRequest = requestStats.requests.find((x) => x.event_id === "smoke-hook-1");
   assert.equal(hookRequest.agent, "codex");
   assert.equal(hookRequest.time, "2026-07-01T00:01:00.000Z");
+  assert.equal(hookRequest.username, "test-machine");
   assert.equal(hookRequest.machine, "test-machine");
   assert.equal(hookRequest.hook_type, "PreToolUse");
+  assert.equal(requestStats.by_username.find((x) => x.username === "test-machine").count, 2);
   assert.equal(requestStats.by_hook_type.find((x) => x.hook_type === "PreToolUse").count, 1);
+
+  const userRequestStats = await get(`${base}/api/request-stats?username=test-machine&limit=20`);
+  assert.equal(userRequestStats.summary.total_requests, 2);
+  assert.equal(userRequestStats.summary.users, 1);
 
   const usageSummary = await get(`${base}/api/usage/summary`);
   assert.equal(usageSummary.summary.total_requests, 2);
@@ -112,10 +119,13 @@ try {
 
   const codexProviderUsage = await get(`${base}/api/usage/summary?provider=codex`);
   assert.equal(codexProviderUsage.summary.total_requests, 1);
+  const codexUserUsage = await get(`${base}/api/usage/summary?username=test-machine`);
+  assert.equal(codexUserUsage.summary.total_requests, 1);
 
   const usageLogs = await get(`${base}/api/usage/logs?pageSize=10`);
   assert.equal(usageLogs.total, 2);
   assert.equal(usageLogs.logs.some((x) => x.event_id === "smoke-hook-1"), false);
+  assert.equal(usageLogs.logs.find((x) => x.event_id === "smoke-1").username, "test-machine");
 
   assert.equal(translateLoopEvent("claude-code", "PreToolUse").loop_event, "tool.before");
   assert.equal(translateLoopEvent("pi", "before_provider_request").agent_status, "thinking");
@@ -130,6 +140,8 @@ try {
   assert.equal(openClawUsage.cache_read_tokens, 3);
   assert.equal(openClawUsage.cache_write_tokens, 1);
   assert.equal(openClawUsage.total_tokens, 10);
+  assert.equal(normalizeEvent({ meta: { machine_name: "HOST" } }).username, "HOST");
+  assert.equal(normalizeEvent({ username: "desk", meta: { machine_name: "HOST" } }).username, "desk");
 
   // plugin hooks.json 合法性（取代已移除的 generate-hook-config 测试）
   const claudeHooks = JSON.parse(readFileSync(new URL("../plugins/claude-code/hooks/hooks.json", import.meta.url), "utf8"));
@@ -145,8 +157,11 @@ try {
 
   const dashboard = await text(`${base}/`);
   assert.match(dashboard, /id="lang"/);
+  assert.match(dashboard, /id="usernameSelect"/);
+  assert.match(dashboard, /OpenClaw/);
   assert.match(dashboard, /data-i18n="hookType"/);
   assert.match(dashboard, /data-i18n="machine"/);
+  assert.match(dashboard, /data-i18n="user"/);
   assert.match(dashboard, /使用统计/);
   assert.match(dashboard, /请求统计/);
 

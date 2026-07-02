@@ -15,6 +15,7 @@ export function openDatabase(dbPath) {
       event_type TEXT NOT NULL,
       occurred_at TEXT NOT NULL,
       day TEXT NOT NULL,
+      username TEXT NOT NULL,
       host_id TEXT NOT NULL,
       workspace_id TEXT NOT NULL,
       session_id TEXT NOT NULL,
@@ -57,6 +58,7 @@ export function openDatabase(dbPath) {
       summary_json TEXT NOT NULL
     );
   `);
+  migrateDatabase(db);
   return db;
 }
 
@@ -64,9 +66,9 @@ export function insertEvent(db, event) {
   const insert = db.prepare(`
     INSERT OR IGNORE INTO events (
       event_id, schema_version, source_agent, source_surface, event_type,
-      occurred_at, day, host_id, workspace_id, session_id, turn_id, agent_id,
+      occurred_at, day, username, host_id, workspace_id, session_id, turn_id, agent_id,
       provider, model, status, duration_ms, usage_json, meta_json
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
   const result = insert.run(
     event.event_id,
@@ -76,6 +78,7 @@ export function insertEvent(db, event) {
     event.event_type,
     event.occurred_at,
     event.day,
+    event.username || event.meta?.username || event.meta?.machine_name || event.host_id || "unknown",
     event.host_id,
     event.workspace_id,
     event.session_id,
@@ -124,6 +127,7 @@ export function listRequestStats(db, filters = {}) {
     summary: {
       total_requests: events.length,
       agents: unique(events.map((e) => e.source_agent)).length,
+      users: unique(events.map(eventUsername)).length,
       machines: unique(events.map(eventMachine)).length,
       hook_types: unique(events.map((e) => e.event_type)).length,
     },
@@ -131,10 +135,12 @@ export function listRequestStats(db, filters = {}) {
       event_id: event.event_id,
       agent: event.source_agent,
       time: event.occurred_at,
+      username: eventUsername(event),
       machine: eventMachine(event),
       hook_type: event.event_type,
     })),
     by_agent: countBy(events, (event) => event.source_agent, "agent"),
+    by_username: countBy(events, eventUsername, "username"),
     by_machine: countBy(events, eventMachine, "machine"),
     by_hook_type: countBy(events, (event) => event.event_type, "hook_type"),
     trend: requestTrend(events, filters),
@@ -192,6 +198,7 @@ export function listUsageLogs(db, filters = {}, page = 0, pageSize = 20) {
         event_id: event.event_id,
         time: event.occurred_at,
         agent: event.source_agent,
+        username: eventUsername(event),
         provider: usageProvider(event),
         model: event.model || "unknown",
         input_tokens: Number(u.input_tokens || 0),
@@ -259,6 +266,7 @@ function upsertDaily(db, event) {
 function upsertAgentState(db, event) {
   const key = [event.source_agent, event.host_id, event.workspace_id, event.session_id, event.agent_id].join(":");
   const summary = {
+    username: event.username,
     event_type: event.event_type,
     model: event.model,
     provider: event.provider,
@@ -287,11 +295,13 @@ function upsertAgentState(db, event) {
 }
 
 function rowToEvent(row) {
-  return {
+  const event = {
     ...row,
     usage: JSON.parse(row.usage_json),
     meta: JSON.parse(row.meta_json),
   };
+  event.username = row.username || eventUsername(event);
+  return event;
 }
 
 function listUsageEvents(db, filters) {
@@ -312,6 +322,10 @@ function listFilteredEvents(db, filters = {}) {
   if (filters.agent) {
     conditions.push("source_agent = ?");
     params.push(filters.agent);
+  }
+  if (filters.username) {
+    conditions.push("username = ?");
+    params.push(filters.username);
   }
   if (filters.provider) {
     conditions.push("(provider = ? OR (provider = 'unknown' AND source_agent = ?))");
@@ -447,6 +461,29 @@ function usageTotal(event) {
 
 function eventMachine(event) {
   return event.meta?.machine_name || event.host_id || "unknown";
+}
+
+function eventUsername(event) {
+  return event.username || event.meta?.username || event.meta?.machine_name || event.host_id || "unknown";
+}
+
+function migrateDatabase(db) {
+  const columns = db.prepare("PRAGMA table_info(events)").all().map((row) => row.name);
+  if (!columns.includes("username")) {
+    db.exec("ALTER TABLE events ADD COLUMN username TEXT NOT NULL DEFAULT ''");
+    const rows = db.prepare("SELECT event_id, host_id, meta_json FROM events WHERE username = ''").all();
+    const update = db.prepare("UPDATE events SET username = ? WHERE event_id = ?");
+    for (const row of rows) {
+      let meta = {};
+      try {
+        meta = JSON.parse(row.meta_json || "{}");
+      } catch {
+        meta = {};
+      }
+      update.run(meta.username || meta.machine_name || row.host_id || "unknown", row.event_id);
+    }
+  }
+  db.exec("CREATE INDEX IF NOT EXISTS events_username_idx ON events(username, occurred_at)");
 }
 
 function unique(values) {

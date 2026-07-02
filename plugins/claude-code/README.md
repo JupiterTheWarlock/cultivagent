@@ -12,7 +12,7 @@ Cultivagent is a **pure passive ingest sink** — this plugin only forwards hook
 bash <(curl -fsSL https://raw.githubusercontent.com/JupiterTheWarlock/cultivagent/main/plugins/claude-code/setup-helper/install.sh)
 ```
 
-The installer checks dependencies, writes `~/.cultivagent/config.json` (endpoint + token), clones the repo to `~/.cultivagent/repo`, registers the local marketplace, and runs `claude plugin install`. Re-running is safe (idempotent). Non-interactive when piped (`curl | bash`) — uses env / existing config / defaults.
+The installer checks dependencies, writes `~/.cultivagent/config.json` (endpoint + token + optional username), clones the repo to `~/.cultivagent/repo`, registers the local marketplace, and runs `claude plugin install`. Re-running is safe (idempotent). Non-interactive when piped (`curl | bash`) — uses env / existing config / defaults.
 
 > Windows: run under **git-bash** (the bundled bash from Git for Windows). The installer targets bash — Linux for production, git-bash for dev/test.
 
@@ -38,7 +38,7 @@ The installer checks dependencies, writes `~/.cultivagent/config.json` (endpoint
 
 ## Config priority
 
-hook scripts resolve endpoint/token as: env (`CULTIVAGENT_ENDPOINT` / `CULTIVAGENT_TOKEN`) > `~/.cultivagent/config.json` > `http://127.0.0.1:3737` (no token).
+hook scripts resolve endpoint/token as: env (`CULTIVAGENT_ENDPOINT` / `CULTIVAGENT_TOKEN`) > `~/.cultivagent/config.json` > `http://127.0.0.1:3737` (no token). `username` defaults to the machine hostname; override it with `CULTIVAGENT_USERNAME` or `~/.cultivagent/config.json.username`.
 
 ## Status
 

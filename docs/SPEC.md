@@ -23,6 +23,7 @@ Cloudflare remains a later backend option for public plugin distribution and hos
   "source_surface": "hook|otel|plugin|extension|cli-smoke",
   "event_type": "raw vendor hook name",
   "occurred_at": "ISO-8601",
+  "username": "machine name by default; configurable per machine",
   "host_id": "redacted host key",
   "workspace_id": "redacted workspace key",
   "session_id": "source session id",

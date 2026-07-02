@@ -39,6 +39,7 @@ Writes `~/.cultivagent/config.json`, clones the repo, and adds a `pi()` shell wr
 ## Config priority
 
 env (`CULTIVAGENT_ENDPOINT` / `CULTIVAGENT_TOKEN`) > `~/.cultivagent/config.json` > `http://127.0.0.1:3737` (no token).
+`username` defaults to the machine hostname; override it with `CULTIVAGENT_USERNAME` or `~/.cultivagent/config.json.username`.
 
 ## Events forwarded
 

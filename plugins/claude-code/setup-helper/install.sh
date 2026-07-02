@@ -17,6 +17,7 @@
 #   CULTIVAGENT_REPO_REF / _BRANCH  ref to checkout (default: main)
 #   CULTIVAGENT_ENDPOINT            non-interactive: server URL
 #   CULTIVAGENT_TOKEN               non-interactive: bearer token
+#   CULTIVAGENT_USERNAME            optional username label (default: machine name)
 #
 # Targets bash — Linux (production) and git-bash on Windows (dev/test).
 
@@ -60,6 +61,7 @@ Env overrides:
   CULTIVAGENT_REPO_REF / _BRANCH  ref to checkout (default: main)
   CULTIVAGENT_ENDPOINT            non-interactive: server URL
   CULTIVAGENT_TOKEN               non-interactive: bearer token
+  CULTIVAGENT_USERNAME            optional username label (default: machine name)
 
 Targets bash (Linux production + git-bash on Windows).
 EOF
@@ -109,8 +111,9 @@ heading 'Step 2/5 — config (~/.cultivagent/config.json)'
 mkdir -p "$CV_HOME"
 
 write_config() {
-  local endpoint="$1" token="$2"
-  jq -n --arg url "$endpoint" --arg tok "$token" '{endpoint:$url, token:$tok}' > "$CONFIG_FILE"
+  local endpoint="$1" token="$2" username="${3:-}"
+  jq -n --arg url "$endpoint" --arg tok "$token" --arg user "$username" \
+    '{endpoint:$url, token:$tok} + (if $user == "" then {} else {username:$user} end)' > "$CONFIG_FILE"
   chmod 600 "$CONFIG_FILE" 2>/dev/null || true
 }
 
@@ -135,18 +138,21 @@ if [ "$RECONFIG" = yes ]; then
       [Rr]*)
         ask 'Server URL (https://...): '; read -r ENDPOINT
         ask 'Token (CULTIVAGENT_TOKEN, input hidden): '; read -r -s TOKEN; echo
+        ask 'Username label (blank = machine name): '; read -r USERNAME
         ;;
       *)
         ENDPOINT='http://127.0.0.1:3737'; TOKEN=''
+        ask 'Username label (blank = machine name): '; read -r USERNAME
         ;;
     esac
     [ -n "${ENDPOINT:-}" ] || { err 'endpoint required'; exit 1; }
   else
     ENDPOINT="${CULTIVAGENT_ENDPOINT:-http://127.0.0.1:3737}"
     TOKEN="${CULTIVAGENT_TOKEN:-}"
+    USERNAME="${CULTIVAGENT_USERNAME:-}"
     info "non-interactive: endpoint from env/default"
   fi
-  write_config "$ENDPOINT" "$TOKEN"
+  write_config "$ENDPOINT" "$TOKEN" "${USERNAME:-}"
   info "wrote $CONFIG_FILE"
 fi
 
