@@ -20,7 +20,8 @@
       {
         "matcher": "*",
         "hooks": [
-          { "type": "command", "command": "node __CULTIVAGENT_PLUGIN_ROOT__/scripts/hook.mjs stop", "timeout": 10 }
+          { "type": "command", "command": "node __CULTIVAGENT_PLUGIN_ROOT__/scripts/hook.mjs stop", "timeout": 10 },
+          { "type": "command", "command": "node __CULTIVAGENT_PLUGIN_ROOT__/scripts/session-collector.mjs --lookback-minutes 60 --batch-size 10", "timeout": 20 }
         ]
       }
     ],

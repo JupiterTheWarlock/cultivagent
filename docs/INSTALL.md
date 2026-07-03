@@ -78,7 +78,7 @@ Manual: `claude plugin marketplace add <repo>/plugins` → `claude plugin instal
 bash <(curl -fsSL https://raw.githubusercontent.com/JupiterTheWarlock/cultivagent/main/plugins/codex/setup-helper/install.sh)
 ```
 
-Codex 0.130 does not inject a plugin-root env var, so the installer copies the plugin and renders `__CULTIVAGENT_PLUGIN_ROOT__` into an absolute path. It also configures Codex `[otel]` log export so `codex.sse_event` token counts reach `/otel/v1/logs`. See [plugins/codex/README.md](../plugins/codex/README.md).
+Codex 0.130 does not inject a plugin-root env var, so the installer copies the plugin and renders `__CULTIVAGENT_PLUGIN_ROOT__` into an absolute path. The Stop hook runs the session collector to report usage, so `[otel]` is not written by default. See [plugins/codex/README.md](../plugins/codex/README.md).
 
 ### OpenCode
 

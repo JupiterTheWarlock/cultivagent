@@ -310,6 +310,7 @@ try {
   assert.ok(claudeHooks.hooks.PostToolUse, "claude-code hooks.json missing PostToolUse");
   assert.ok(claudeHooks.hooks.MessageDisplay, "claude-code hooks.json missing MessageDisplay");
   assert.match(claudeHooks.hooks.SessionStart[0].hooks[0].command, /\$\{CLAUDE_PLUGIN_ROOT\}/);
+  assert.match(claudeHooks.hooks.Stop[0].hooks[1].command, /session-collector\.mjs/);
   const claudeToolEvent = claudeBaseEvent("claude-code", {
     hook_event_name: "PostToolUse",
     cwd: "D:/repo",
@@ -327,6 +328,7 @@ try {
   const codexHooks = JSON.parse(readFileSync(new URL("../plugins/codex/hooks/hooks.json", import.meta.url), "utf8"));
   assert.ok(codexHooks.hooks.Stop, "codex hooks.json missing Stop");
   assert.match(codexHooks.hooks.Stop[0].hooks[0].command, /__CULTIVAGENT_PLUGIN_ROOT__/);
+  assert.match(codexHooks.hooks.Stop[0].hooks[1].command, /session-collector\.mjs/);
 
   const agents = await get(`${base}/api/agents`);
   assert.equal(agents.agents.length, 3);

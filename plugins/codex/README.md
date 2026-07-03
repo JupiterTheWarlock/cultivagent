@@ -1,10 +1,10 @@
 # Cultivagent plugin for Codex
 
-Sends Codex hook events (SessionStart / UserPromptSubmit / Stop / PreCompact) and Codex OTel usage records to a self-hosted [Cultivagent](../..) server for token & usage monitoring.
+Sends Codex hook events (SessionStart / UserPromptSubmit / Stop / PreCompact) and Codex session usage records to a self-hosted [Cultivagent](../..) server for token & usage monitoring.
 
-Codex provides no `SessionEnd` hook (upstream rejected — threads are always resumable), so the plugin forwards the four available lifecycle events. Token accounting comes from Codex's built-in OTel log export: `codex.sse_event` records include token counts on `response.completed`.
+Codex provides no `SessionEnd` hook (upstream rejected — threads are always resumable), so the plugin forwards the four available lifecycle events. Token accounting comes from the Stop-hook session collector.
 
-Cultivagent is a **pure passive ingest sink** — this plugin only forwards hook metadata to `POST /ingest` and configures Codex OTel logs to `POST /otel/v1/logs`. No MCP, no agent-callable interface, **no shell wrapper**.
+Cultivagent is a **pure passive ingest sink** — this plugin only forwards hook metadata and session usage to `POST /ingest`. No MCP, no agent-callable interface, **no shell wrapper**.
 
 ## Install
 
@@ -14,7 +14,7 @@ Cultivagent is a **pure passive ingest sink** — this plugin only forwards hook
 bash <(curl -fsSL https://raw.githubusercontent.com/JupiterTheWarlock/cultivagent/main/plugins/codex/setup-helper/install.sh)
 ```
 
-The installer checks dependencies, writes `~/.cultivagent/config.json`, clones the repo, **copies the plugin to `~/.cultivagent/codex-marketplace/codex` and renders `__CULTIVAGENT_PLUGIN_ROOT__` into an absolute path** (Codex 0.130 does not inject a plugin-root env var into hook subprocesses), registers the marketplace, enables the plugin in `~/.codex/config.toml`, and configures `[otel]` to send usage logs to Cultivagent. Re-running is safe.
+The installer checks dependencies, writes `~/.cultivagent/config.json`, clones the repo, **copies the plugin to `~/.cultivagent/codex-marketplace/codex` and renders `__CULTIVAGENT_PLUGIN_ROOT__` into an absolute path** (Codex 0.130 does not inject a plugin-root env var into hook subprocesses), registers the marketplace, and enables the plugin in `~/.codex/config.toml`. It does not write `[otel]` by default. Re-running is safe.
 
 > Windows: run under **git-bash**.
 
@@ -61,13 +61,7 @@ The installer checks dependencies, writes `~/.cultivagent/config.json`, clones t
    enabled = true
    ```
 
-7. Configure Codex OTel usage export:
-
-   ```toml
-   [otel]
-   environment = "cultivagent"
-   exporter = { otlp-http = { endpoint = "https://your-server.example.com/otel/v1/logs", protocol = "json", headers = { "Authorization" = "Bearer <token>" } } }
-   ```
+7. Restart Codex.
 
 ## Config priority
 
@@ -87,8 +81,14 @@ The actual Codex hook name from the stdin payload is used as `event_type`; the a
 
 ## Usage Accounting
 
-Hook events are lifecycle signals, not the source of truth for token counts. Codex OTel logs are the live usage source; Cultivagent counts OTel `response.completed` records with token fields as `model_response` usage events. Manual session backfill:
+Hook events are lifecycle signals, not the source of truth for token counts. Usage totals come from the Stop-hook session collector. Manual session backfill:
 
 ```bash
 node ~/.cultivagent/codex-marketplace/codex/scripts/session-collector.mjs --lookback-minutes 120 --batch-size 10
+```
+
+Codex native OTel export is optional. To opt in during install:
+
+```bash
+CULTIVAGENT_ENABLE_CODEX_OTEL=1 bash plugins/codex/setup-helper/install.sh
 ```

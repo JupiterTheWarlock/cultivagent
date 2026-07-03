@@ -60,6 +60,7 @@ Env overrides:
   CULTIVAGENT_ENDPOINT            non-interactive: server URL
   CULTIVAGENT_TOKEN               non-interactive: bearer token
   CULTIVAGENT_USERNAME            optional username label (default: machine name)
+  CULTIVAGENT_ENABLE_CODEX_OTEL   optional: set 1 to also configure Codex OTel
   CODEX_CONFIG_FILE               codex config.toml path (default: ~/.codex/config.toml)
 
 Targets bash (Linux production + git-bash on Windows). Requires only git + node.
@@ -221,7 +222,7 @@ else
 fi
 
 # --- 5. marketplace + config.toml + install ---
-heading 'Step 5/6 — codex plugin + OTel usage export'
+heading 'Step 5/6 — codex plugin'
 if ! command -v codex >/dev/null 2>&1; then
   err "'codex' CLI not found. Install Codex first, then re-run."
   err "Manual commands once codex is available:"
@@ -302,7 +303,11 @@ fs.mkdirSync(require("node:path").dirname(path), { recursive: true });
 fs.writeFileSync(path, text);
 NODE
 info "enabled plugin + features.plugin_hooks in $CODEX_CONFIG"
-configure_otel
+if [ "${CULTIVAGENT_ENABLE_CODEX_OTEL:-0}" = 1 ]; then
+  configure_otel
+else
+  info 'skipped Codex OTel config; Stop hook session collector will backfill usage'
+fi
 
 if codex plugin add --help >/dev/null 2>&1; then
   codex plugin add "$PLUGIN_ID" >/dev/null 2>&1 || info "plugin add: already installed or queued"
@@ -328,4 +333,4 @@ node -e '
 ' "$CONFIG_FILE" || warn 'self-check failed'
 
 echo
-info 'Done. Restart Codex to activate hooks and OTel usage export.'
+info 'Done. Restart Codex to activate hooks.'
