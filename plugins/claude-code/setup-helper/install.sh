@@ -102,12 +102,15 @@ install_legacy() {
 configure_otel() {
   node - "$CONFIG_FILE" "$CLAUDE_SETTINGS" <<'NODE'
 const fs = require("node:fs");
+const os = require("node:os");
 const path = require("node:path");
 
 const [configPath, settingsPath] = process.argv.slice(2);
 let cfg = {};
 try { cfg = JSON.parse(fs.readFileSync(configPath, "utf8")); } catch {}
 const endpoint = String(cfg.endpoint || "http://127.0.0.1:3737").replace(/\/$/, "");
+const machineName = os.hostname();
+const username = process.env.CULTIVAGENT_USERNAME || cfg.username || "";
 
 let settings = {};
 try { settings = JSON.parse(fs.readFileSync(settingsPath, "utf8")); } catch {}
@@ -125,6 +128,17 @@ Object.assign(settings.env, {
 });
 if (cfg.token) settings.env.OTEL_EXPORTER_OTLP_HEADERS = `Authorization=Bearer ${cfg.token}`;
 else delete settings.env.OTEL_EXPORTER_OTLP_HEADERS;
+const managedAttrs = new Set(["cultivagent.username", "cultivagent.machine_name", "host.name"]);
+const existingAttrs = String(settings.env.OTEL_RESOURCE_ATTRIBUTES || "")
+  .split(",")
+  .filter((part) => part && !managedAttrs.has(part.split("=")[0].trim()));
+const attr = (key, value) => `${key}=${String(value).replace(/([\\,=])/g, "\\$1")}`;
+settings.env.OTEL_RESOURCE_ATTRIBUTES = [
+  ...existingAttrs,
+  ...(username ? [attr("cultivagent.username", username)] : []),
+  attr("cultivagent.machine_name", machineName),
+  attr("host.name", machineName),
+].join(",");
 
 fs.mkdirSync(path.dirname(settingsPath), { recursive: true });
 fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + "\n");

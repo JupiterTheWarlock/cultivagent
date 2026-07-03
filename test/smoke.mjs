@@ -3,7 +3,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { hostname, tmpdir } from "node:os";
 import { join } from "node:path";
 import { createCultivagentServer } from "../src/server.mjs";
-import { normalizeEvent, translateLoopEvent } from "../src/normalize.mjs";
+import { normalizeEvent, normalizeOtelLogs, translateLoopEvent } from "../src/normalize.mjs";
 import { collectSessionEventsFromFile } from "../plugins/codex/scripts/session-collector.mjs";
 import { baseEvent as claudeBaseEvent } from "../plugins/claude-code/scripts/lib.mjs";
 
@@ -144,6 +144,20 @@ try {
   assert.equal(openClawUsage.total_tokens, 10);
   assert.equal(normalizeEvent({ meta: { machine_name: "HOST" } }).username, "HOST");
   assert.equal(normalizeEvent({ username: "desk", meta: { machine_name: "HOST" } }).username, "desk");
+  const explicitOtelUser = normalizeOtelLogs(otelLogFixture([
+    ["service.name", "claude-code"],
+    ["cultivagent.username", "desk"],
+    ["cultivagent.machine_name", "HOST"],
+    ["host.name", "localhost"],
+  ]))[0];
+  assert.equal(explicitOtelUser.username, "desk");
+  assert.equal(explicitOtelUser.meta.machine_name, "HOST");
+  const missingOtelUser = normalizeOtelLogs(otelLogFixture([
+    ["service.name", "claude-code"],
+    ["host.name", "localhost"],
+  ]))[0];
+  assert.equal(missingOtelUser.username, "unknown");
+  assert.equal(missingOtelUser.meta.machine_name, "localhost");
 
   const codexSessionPath = join(dir, "codex-session.jsonl");
   writeFileSync(codexSessionPath, [
@@ -270,4 +284,20 @@ async function text(url) {
   const response = await fetch(url);
   if (!response.ok) assert.fail(await response.text());
   return response.text();
+}
+
+function otelLogFixture(resourceAttrs) {
+  return {
+    resourceLogs: [{
+      resource: {
+        attributes: resourceAttrs.map(([key, value]) => ({ key, value: { stringValue: value } })),
+      },
+      scopeLogs: [{
+        logRecords: [{
+          body: { stringValue: "api_request" },
+          attributes: [{ key: "event.name", value: { stringValue: "api_request" } }],
+        }],
+      }],
+    }],
+  };
 }

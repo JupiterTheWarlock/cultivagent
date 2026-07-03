@@ -123,8 +123,8 @@ export function normalizeOtelLogs(body, defaults = {}) {
           source_surface: "otel",
           event_type: otelEventType(agent, name, kind, usage),
           occurred_at: nanosToDate(logRecord.timeUnixNano) ?? attrs["event.timestamp"],
-          username: attrs["cultivagent.username"] ?? attrs.username ?? attrs["user.name"] ?? attrs["host.name"],
-          machine_name: attrs["host.name"],
+          username: otelUsername(attrs),
+          machine_name: otelMachineName(attrs),
           host_id: attrs["host.id"] ?? attrs["host.name"],
           workspace_id: attrs["workspace.id"] ?? attrs["workspace.path"],
           session_id: attrs["session.id"] ?? attrs["conversation.id"],
@@ -174,8 +174,8 @@ export function normalizeOtelMetrics(body, defaults = {}) {
             source_surface: "otel",
             event_type: metric.name,
             occurred_at: nanosToDate(point.timeUnixNano) ?? new Date(),
-            username: attrs["cultivagent.username"] ?? attrs.username ?? attrs["user.name"] ?? attrs["host.name"],
-            machine_name: attrs["host.name"],
+            username: otelUsername(attrs),
+            machine_name: otelMachineName(attrs),
             host_id: attrs["host.id"] ?? attrs["host.name"],
             workspace_id: attrs["workspace.id"] ?? attrs["workspace.path"],
             session_id: attrs["session.id"],
@@ -338,6 +338,14 @@ function agentFromService(service) {
   if (service === "claude-code") return "claude-code";
   if (service === "codex" || service === "openai-codex") return "codex";
   return "cultivagent";
+}
+
+function otelUsername(attrs) {
+  return attrs["cultivagent.username"] ?? attrs.username ?? attrs["user.name"] ?? "unknown";
+}
+
+function otelMachineName(attrs) {
+  return attrs["cultivagent.machine_name"] ?? attrs["host.name"];
 }
 
 function attrsToObject(attrs = []) {
