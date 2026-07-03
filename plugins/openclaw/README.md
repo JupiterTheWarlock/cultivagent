@@ -16,7 +16,8 @@ The installer writes the shared `~/.cultivagent/config.json`, links this plugin
 directory with `openclaw plugins install --link`, enables `plugins.entries.cultivagent`,
 and allows conversation-observation hooks so `llm_output` usage metadata can be
 observed. The plugin forwards metadata and usage counters, including nested
-OpenClaw usage state; it does not forward raw prompts or model output.
+OpenClaw `usageState`, `agentMeta`, response, output, result, and payload usage;
+it does not forward raw prompts or model output.
 
 ## Config
 

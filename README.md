@@ -62,10 +62,10 @@ With a token set, every path except `GET /api/health` requires auth (`Authorizat
 The Worker runtime serves the same dashboard and ingest/API surface using D1 for storage:
 
 ```bash
-wrangler d1 create cultivagent
+npx wrangler d1 create cultivagent
 # copy the database_id into wrangler.jsonc
 npm run worker:migrate:remote
-wrangler secret put CULTIVAGENT_TOKEN
+npx wrangler secret put CULTIVAGENT_TOKEN
 npm run worker:deploy
 ```
 
@@ -105,10 +105,9 @@ Implemented:
 - OpenClaw native plugin entry (stub-grade).
 - CLI smoke events for Codex, Claude Code, OpenCode.
 
-Still intentionally fixture-gated:
+Usage-source notes:
 
-- OpenCode per-message token usage.
-- OpenClaw / Pi provider-specific `usage` fields.
-- Codex hook/session correlation beyond OTel.
-
-Those are not guessed. Capture raw redacted fixtures before marking adapter token accounting complete.
+- Claude Code: OTel is the live source; the Stop hook also runs a local session collector to backfill JSONL usage.
+- Codex: OTel is the live source; the local session collector backfills Codex session JSONL usage when needed.
+- OpenCode: plugin events are live; `plugins/opencode/session-collector.mjs` can backfill `opencode.db` assistant-message usage when present.
+- OpenClaw: native plugin usage is counted from plugin payload usage fields, including nested `usageState` / `agentMeta` usage.

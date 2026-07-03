@@ -37,14 +37,14 @@ The Worker runtime is API-compatible with the Node service and stores data in D1
 
 ```bash
 npm install
-wrangler d1 create cultivagent
+npx wrangler d1 create cultivagent
 ```
 
 Copy the generated `database_id` into `wrangler.jsonc`, then run:
 
 ```bash
 npm run worker:migrate:remote
-wrangler secret put CULTIVAGENT_TOKEN
+npx wrangler secret put CULTIVAGENT_TOKEN
 npm run worker:deploy
 ```
 
@@ -56,7 +56,7 @@ For a custom domain, add a route in `wrangler.jsonc`, for example:
 ]
 ```
 
-`npm run worker:deploy` runs `worker:prepare` first, which copies `src/dashboard.html` to `worker/public/index.html` for Workers static assets.
+`npm run worker:deploy` runs `worker:prepare` first, which copies `src/dashboard.html` to `worker/public/index.html` for Workers static assets. The npm scripts use `npx wrangler`, so a global Wrangler install is not required.
 
 ## 2. Install an agent plugin
 
@@ -70,7 +70,7 @@ Each agent has a one-line installer that writes `~/.cultivagent/config.json` (en
 bash <(curl -fsSL https://raw.githubusercontent.com/JupiterTheWarlock/cultivagent/main/plugins/claude-code/setup-helper/install.sh)
 ```
 
-Manual: `claude plugin marketplace add <repo>/plugins` → `claude plugin install claude-code@cultivagent-plugins-local`. The installer also enables Claude Code OTel export so token usage reaches `/otel/v1/metrics` and `/otel/v1/logs`. See [plugins/claude-code/README.md](../plugins/claude-code/README.md).
+Manual: `claude plugin marketplace add <repo>/plugins` → `claude plugin install claude-code@cultivagent-plugins-local`. The installer also enables Claude Code OTel export so token usage reaches `/otel/v1/metrics` and `/otel/v1/logs`; the Stop hook runs the session collector to backfill JSONL usage. Re-run the installer after upgrades to sync the installed plugin copy under `~/.cultivagent/repo`. See [plugins/claude-code/README.md](../plugins/claude-code/README.md).
 
 ### Codex
 
@@ -87,6 +87,12 @@ bash <(curl -fsSL https://raw.githubusercontent.com/JupiterTheWarlock/cultivagen
 ```
 
 Appends the plugin path to `~/.config/opencode/opencode.json`. See [plugins/opencode/README.md](../plugins/opencode/README.md).
+
+OpenCode usage backfill is available with:
+
+```bash
+node ~/.cultivagent/repo/plugins/opencode/session-collector.mjs
+```
 
 ### Pi
 

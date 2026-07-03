@@ -87,4 +87,8 @@ The actual Codex hook name from the stdin payload is used as `event_type`; the a
 
 ## Usage Accounting
 
-Hook events are lifecycle signals, not the source of truth for token counts. Codex OTel logs are the usage source; Cultivagent counts OTel `response.completed` records with token fields as `model_response` usage events.
+Hook events are lifecycle signals, not the source of truth for token counts. Codex OTel logs are the live usage source; Cultivagent counts OTel `response.completed` records with token fields as `model_response` usage events. Manual session backfill:
+
+```bash
+node ~/.cultivagent/codex-marketplace/codex/scripts/session-collector.mjs --lookback-minutes 120 --batch-size 10
+```

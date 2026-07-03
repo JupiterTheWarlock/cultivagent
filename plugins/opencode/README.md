@@ -46,4 +46,8 @@ env (`CULTIVAGENT_ENDPOINT` / `CULTIVAGENT_TOKEN`) > `~/.cultivagent/config.json
 
 ## What it forwards
 
-Every OpenCode `event` is sent as one ingest with `source_agent: "opencode"`, `event_type: event.type`. Per-message token usage depends on OpenCode exposing usage fields in the event payload — verify with a fixture before treating totals as authoritative.
+Every OpenCode `event` is sent as one ingest with `source_agent: "opencode"`, `event_type: event.type`. Per-message usage can also be backfilled from the local OpenCode SQLite database when assistant messages contain `tokens`:
+
+```bash
+node ~/.cultivagent/repo/plugins/opencode/session-collector.mjs
+```
