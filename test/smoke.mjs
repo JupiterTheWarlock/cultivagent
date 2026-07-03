@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { createCultivagentServer } from "../src/server.mjs";
 import { normalizeEvent, translateLoopEvent } from "../src/normalize.mjs";
 import { collectSessionEventsFromFile } from "../plugins/codex/scripts/session-collector.mjs";
+import { baseEvent as claudeBaseEvent } from "../plugins/claude-code/scripts/lib.mjs";
 
 const dir = mkdtempSync(join(tmpdir(), "cultivagent-"));
 const dbPath = join(dir, "test.sqlite");
@@ -183,7 +184,24 @@ try {
   const claudeHooks = JSON.parse(readFileSync(new URL("../plugins/claude-code/hooks/hooks.json", import.meta.url), "utf8"));
   assert.ok(claudeHooks.hooks.SessionStart, "claude-code hooks.json missing SessionStart");
   assert.ok(claudeHooks.hooks.SessionEnd, "claude-code hooks.json missing SessionEnd");
+  assert.ok(claudeHooks.hooks.PreToolUse, "claude-code hooks.json missing PreToolUse");
+  assert.ok(claudeHooks.hooks.PostToolUse, "claude-code hooks.json missing PostToolUse");
+  assert.ok(claudeHooks.hooks.MessageDisplay, "claude-code hooks.json missing MessageDisplay");
   assert.match(claudeHooks.hooks.SessionStart[0].hooks[0].command, /\$\{CLAUDE_PLUGIN_ROOT\}/);
+  const claudeToolEvent = claudeBaseEvent("claude-code", {
+    hook_event_name: "PostToolUse",
+    cwd: "D:/repo",
+    session_id: "claude-s1",
+    tool_name: "Bash",
+    tool_use_id: "tool-1",
+    tool_input: { command: "echo hi" },
+    tool_response: { stdout: "hi" },
+    duration_ms: 42,
+  });
+  assert.equal(claudeToolEvent.event_type, "PostToolUse");
+  assert.equal(claudeToolEvent.duration_ms, 42);
+  assert.equal(claudeToolEvent.meta.tool_name, "Bash");
+  assert.match(claudeToolEvent.meta.tool_input_preview, /echo hi/);
   const codexHooks = JSON.parse(readFileSync(new URL("../plugins/codex/hooks/hooks.json", import.meta.url), "utf8"));
   assert.ok(codexHooks.hooks.Stop, "codex hooks.json missing Stop");
   assert.match(codexHooks.hooks.Stop[0].hooks[0].command, /__CULTIVAGENT_PLUGIN_ROOT__/);

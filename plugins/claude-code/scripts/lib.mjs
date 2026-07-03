@@ -43,6 +43,23 @@ export function baseEvent(agent, hookInput, eventType = "hook_event") {
   const hookEvent = hookInput.hook_event ?? hookInput.hookEventName ?? hookInput.hook_event_name ?? hookInput.event ?? hookInput.type ?? eventType;
   const machineName = hostname();
   const username = resolveUsername(machineName);
+  const meta = compact({
+    machine_name: machineName,
+    username,
+    hook_event: hookEvent,
+    tool_name: hookInput.tool_name ?? hookInput.toolName,
+    tool_use_id: hookInput.tool_use_id ?? hookInput.toolUseId,
+    tool_input_preview: preview(hookInput.tool_input ?? hookInput.toolInput),
+    tool_response_preview: preview(hookInput.tool_response ?? hookInput.toolResponse),
+    message_id: hookInput.message_id ?? hookInput.messageId,
+    message_index: hookInput.index,
+    message_final: hookInput.final,
+    message_delta_preview: preview(hookInput.delta),
+    last_assistant_message_preview: preview(hookInput.last_assistant_message ?? hookInput.lastAssistantMessage),
+    error: hookInput.error,
+    error_details_preview: preview(hookInput.error_details ?? hookInput.errorDetails),
+    trigger: hookInput.trigger,
+  });
   return {
     source_agent: agent,
     source_surface: "hook",
@@ -56,13 +73,9 @@ export function baseEvent(agent, hookInput, eventType = "hook_event") {
     agent_id: hookInput.agent_id ?? "",
     model: hookInput.model ?? "unknown",
     provider: hookInput.provider ?? "unknown",
-    status: hookInput.status ?? "ok",
-    meta: {
-      machine_name: machineName,
-      username,
-      hook_event: hookEvent,
-      tool_name: hookInput.tool_name ?? hookInput.toolName ?? "",
-    },
+    status: hookInput.status ?? (hookInput.error ? "error" : "ok"),
+    duration_ms: hookInput.duration_ms ?? hookInput.durationMs,
+    meta,
   };
 }
 
@@ -73,4 +86,15 @@ export function resolveUsername(machineName = hostname()) {
 
 export function hash(value) {
   return createHash("sha256").update(String(value ?? "")).digest("hex").slice(0, 16);
+}
+
+function compact(value) {
+  return Object.fromEntries(Object.entries(value).filter(([, v]) => v !== undefined && v !== ""));
+}
+
+function preview(value, max = 2000) {
+  if (value == null || value === "") return undefined;
+  const text = typeof value === "string" ? value : JSON.stringify(value);
+  // ponytail: bounded previews keep telemetry useful without shipping unlimited raw output.
+  return text.length > max ? `${text.slice(0, max)}... [+${text.length - max} chars]` : text;
 }

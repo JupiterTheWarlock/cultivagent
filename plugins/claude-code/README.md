@@ -1,6 +1,6 @@
 # Cultivagent plugin for Claude Code
 
-Sends Claude Code hook events (SessionStart / UserPromptSubmit / Stop / PreCompact / SessionEnd) to a self-hosted [Cultivagent](../..) server for token & usage monitoring.
+Sends Claude Code hook events (SessionStart / UserPromptSubmit / MessageDisplay / PreToolUse / PostToolUse / PostToolUseFailure / PostToolBatch / Stop / PreCompact / SessionEnd) to a self-hosted [Cultivagent](../..) server for token & usage monitoring.
 
 Cultivagent is a **pure passive ingest sink** — this plugin only forwards hook events to `POST /ingest`. It does not expose any MCP tool or agent-callable interface.
 
@@ -52,6 +52,11 @@ hook scripts resolve endpoint/token as: env (`CULTIVAGENT_ENDPOINT` / `CULTIVAGE
 |---|---|
 | SessionStart | `session_start` |
 | UserPromptSubmit | `user_prompt_submit` |
+| MessageDisplay | `message_display` |
+| PreToolUse | `pre_tool_use` |
+| PostToolUse | `post_tool_use` |
+| PostToolUseFailure | `post_tool_use_failure` |
+| PostToolBatch | `post_tool_batch` |
 | Stop | `stop` |
 | PreCompact | `pre_compact` |
 | SessionEnd | `session_end` |
