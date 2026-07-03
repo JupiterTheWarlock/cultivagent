@@ -23,6 +23,10 @@ export async function readStdinJson() {
 }
 
 export async function sendEvent(event) {
+  return sendEvents([event]);
+}
+
+export async function sendEvents(events) {
   const cfg = loadConfig();
   // 优先级：env > config.json > 默认本地
   let endpoint = process.env.CULTIVAGENT_ENDPOINT ?? cfg.endpoint ?? "http://127.0.0.1:3737";
@@ -31,12 +35,21 @@ export async function sendEvent(event) {
   const token = process.env.CULTIVAGENT_TOKEN ?? cfg.token ?? "";
   const headers = { "content-type": "application/json" };
   if (token) headers.authorization = `Bearer ${token}`;
-  const response = await fetch(endpoint, {
-    method: "POST",
-    headers,
-    body: JSON.stringify(event),
-  });
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), Number(process.env.CULTIVAGENT_TIMEOUT_MS ?? "15000"));
+  let response;
+  try {
+    response = await fetch(endpoint, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(events.length === 1 ? events[0] : events),
+      signal: controller.signal,
+    });
+  } finally {
+    clearTimeout(timeout);
+  }
   if (!response.ok) throw new Error(`cultivagent ingest failed: ${response.status} ${await response.text()}`);
+  return response.json();
 }
 
 export function baseEvent(agent, hookInput, eventType = "hook_event") {

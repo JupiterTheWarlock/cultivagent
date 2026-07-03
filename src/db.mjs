@@ -64,6 +64,7 @@ export function openDatabase(dbPath) {
 
 export function insertEvent(db, event) {
   event = withCorrelatedUsername(db, event);
+  if (shouldSkipSessionCollectorUsage(db, event)) return false;
   const insert = db.prepare(`
     INSERT OR IGNORE INTO events (
       event_id, schema_version, source_agent, source_surface, event_type,
@@ -332,6 +333,42 @@ function withCorrelatedUsername(db, event) {
   `).get(event.source_agent, event.session_id);
   if (!row?.username) return event;
   return { ...event, username: row.username, meta: { ...event.meta, username: row.username } };
+}
+
+function shouldSkipSessionCollectorUsage(db, event) {
+  if (event.source_surface !== "session_collector" || !isUsageEvent(event)) return false;
+  const occurredMs = Date.parse(event.occurred_at);
+  if (!Number.isFinite(occurredMs)) return false;
+  const u = event.usage || {};
+  const start = new Date(occurredMs - 10 * 60 * 1000).toISOString();
+  const end = new Date(occurredMs + 10 * 60 * 1000).toISOString();
+  const rows = db.prepare(`
+    SELECT model, usage_json FROM events
+    WHERE source_agent = ?
+      AND source_surface != 'session_collector'
+      AND status != 'error'
+      AND occurred_at BETWEEN ? AND ?
+      AND (LOWER(model) = LOWER(?) OR LOWER(model) = 'unknown' OR LOWER(?) = 'unknown')
+    LIMIT 100
+  `).all(
+    event.source_agent,
+    start,
+    end,
+    event.model || "unknown",
+    event.model || "unknown",
+  );
+  return rows.some((row) => {
+    let existing = {};
+    try {
+      existing = JSON.parse(row.usage_json || "{}");
+    } catch {
+      existing = {};
+    }
+    return Number(existing.input_tokens || 0) === Number(u.input_tokens || 0) &&
+      Number(existing.output_tokens || 0) === Number(u.output_tokens || 0) &&
+      Number(existing.cache_read_tokens || 0) === Number(u.cache_read_tokens || 0) &&
+      Number(existing.cache_write_tokens || 0) === Number(u.cache_write_tokens || 0);
+  });
 }
 
 function listUsageEvents(db, filters) {

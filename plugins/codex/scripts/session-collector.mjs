@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync,
 import { homedir, hostname } from "node:os";
 import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
-import { hash, resolveUsername, sendEvent } from "./lib.mjs";
+import { hash, resolveUsername, sendEvents } from "./lib.mjs";
 
 const DEFAULT_LOOKBACK_MINUTES = 7 * 24 * 60;
 const DEFAULT_STATE_PATH = join(homedir(), ".cultivagent", "codex-session-collector-state.json");
@@ -32,6 +32,8 @@ export function collectSessionEventsFromFile(file, options = {}) {
     model: "unknown",
     cwd: "",
   };
+  let previousTotalUsage = null;
+  let eventIndex = 0;
   const pending = new Map();
   const lines = readFileSync(file, "utf8").split(/\n/);
 
@@ -58,15 +60,21 @@ export function collectSessionEventsFromFile(file, options = {}) {
         model: clean(payload.model ?? turn.model),
         cwd: clean(payload.cwd ?? session.cwd ?? turn.cwd),
       };
+      previousTotalUsage = null;
+      eventIndex = 0;
       continue;
     }
     if (item.type !== "event_msg") continue;
 
     if (payload.type === "token_count") {
-      const usage = usageFromTokenCount(payload);
+      const parsed = usageFromTokenCount(payload, previousTotalUsage);
+      if (parsed.total) previousTotalUsage = parsed.total;
+      const usage = parsed.usage;
       if (!hasUsage(usage)) continue;
+      eventIndex += 1;
+      const turnKey = turn.id ? `${turn.id}:${eventIndex}` : `event:${eventIndex}`;
       const event = {
-        event_id: stableEventId(session.id, turn.id, item.timestamp, usage),
+        event_id: stableEventId(session.id, turnKey, item.timestamp, usage),
         source_agent: "codex",
         source_surface: "session_collector",
         event_type: "model_response",
@@ -90,19 +98,20 @@ export function collectSessionEventsFromFile(file, options = {}) {
           reasoning_output_tokens: numberFrom(payload.info?.last_token_usage?.reasoning_output_tokens),
         },
       };
-      pending.set(turn.id || event.event_id, event);
+      pending.set(turnKey, event);
       continue;
     }
 
     if (payload.type === "task_complete") {
       const key = clean(payload.turn_id ?? turn.id);
-      const event = pending.get(key);
-      if (!event) continue;
-      const durationMs = numberFrom(payload.duration_ms);
-      if (durationMs != null) event.duration_ms = durationMs;
-      const firstTokenMs = numberFrom(payload.time_to_first_token_ms);
-      if (firstTokenMs != null) event.meta.time_to_first_token_ms = firstTokenMs;
-      event.meta.task_complete = true;
+      for (const [pendingKey, event] of pending) {
+        if (key && !pendingKey.startsWith(`${key}:`)) continue;
+        const durationMs = numberFrom(payload.duration_ms);
+        if (durationMs != null) event.duration_ms = durationMs;
+        const firstTokenMs = numberFrom(payload.time_to_first_token_ms);
+        if (firstTokenMs != null) event.meta.time_to_first_token_ms = firstTokenMs;
+        event.meta.task_complete = true;
+      }
     }
   }
 
@@ -123,18 +132,18 @@ async function main() {
   let sent = 0;
   let failed = 0;
 
-  for (const event of events) {
+  for (const batch of chunks(events, Number(args.batchSize ?? 100))) {
     if (!args.dryRun) {
       try {
-        await sendEvent(event);
+        await sendEvents(batch);
       } catch (error) {
-        failed += 1;
+        failed += batch.length;
         console.error(`[cultivagent] codex session collector failed: ${error instanceof Error ? error.message : String(error)}`);
         continue;
       }
     }
-    seen.add(event.event_id);
-    sent += 1;
+    for (const event of batch) seen.add(event.event_id);
+    sent += batch.length;
   }
 
   if (!args.dryRun) saveState(statePath, { sent: [...seen].slice(-MAX_STATE_IDS) });
@@ -164,19 +173,47 @@ function findJsonlFiles(root, cutoffMs) {
   return files.sort((a, b) => a.mtimeMs - b.mtimeMs || a.path.localeCompare(b.path)).map((file) => file.path);
 }
 
-function usageFromTokenCount(payload) {
-  const usage = payload.info?.last_token_usage ?? payload.info?.total_token_usage ?? {};
-  const inputTotal = numberFrom(usage.input_tokens) ?? 0;
-  const cacheRead = numberFrom(usage.cached_input_tokens ?? usage.cache_read_tokens) ?? 0;
-  const cacheWrite = numberFrom(usage.cache_creation_input_tokens ?? usage.cache_write_tokens) ?? 0;
-  const output = numberFrom(usage.output_tokens) ?? 0;
+function usageFromTokenCount(payload, previousTotalUsage = null) {
+  const info = payload.info ?? {};
+  const raw = info.last_token_usage ?? info.total_token_usage ?? {};
+  const total = parseTokenUsage(info.total_token_usage);
+  const current = parseTokenUsage(raw);
+  const delta = info.total_token_usage && !info.last_token_usage
+    ? subtractTokenUsage(current, previousTotalUsage)
+    : current;
+  const inputTotal = delta.input;
+  const cacheRead = Math.min(delta.cacheRead, inputTotal);
+  const cacheWrite = Math.min(delta.cacheWrite, Math.max(0, inputTotal - cacheRead));
+  const output = delta.output;
   const input = Math.max(0, inputTotal - cacheRead - cacheWrite);
   return {
-    input_tokens: input,
-    output_tokens: output,
-    cache_read_tokens: cacheRead,
-    cache_write_tokens: cacheWrite,
-    total_tokens: numberFrom(usage.total_tokens) ?? input + output + cacheRead + cacheWrite,
+    total,
+    usage: {
+      input_tokens: input,
+      output_tokens: output,
+      cache_read_tokens: cacheRead,
+      cache_write_tokens: cacheWrite,
+      total_tokens: input + output + cacheRead + cacheWrite,
+    },
+  };
+}
+
+function parseTokenUsage(usage = {}) {
+  return {
+    input: numberFrom(usage?.input_tokens) ?? 0,
+    cacheRead: numberFrom(usage?.cached_input_tokens ?? usage?.cache_read_tokens) ?? 0,
+    cacheWrite: numberFrom(usage?.cache_creation_input_tokens ?? usage?.cache_write_tokens) ?? 0,
+    output: numberFrom(usage?.output_tokens) ?? 0,
+  };
+}
+
+function subtractTokenUsage(current, previous) {
+  if (!previous) return current;
+  return {
+    input: Math.max(0, current.input - previous.input),
+    cacheRead: Math.max(0, current.cacheRead - previous.cacheRead),
+    cacheWrite: Math.max(0, current.cacheWrite - previous.cacheWrite),
+    output: Math.max(0, current.output - previous.output),
   };
 }
 
@@ -188,10 +225,11 @@ function parseArgs(argv) {
     else if (arg === "--state") args.state = argv[++i];
     else if (arg === "--lookback-minutes") args.lookbackMinutes = Number(argv[++i]);
     else if (arg === "--include-incomplete") args.includeIncomplete = true;
+    else if (arg === "--batch-size") args.batchSize = Number(argv[++i]);
     else if (arg === "--dry-run") args.dryRun = true;
     else if (arg === "--json") args.json = true;
     else if (arg === "-h" || arg === "--help") {
-      console.log("Usage: session-collector.mjs [--root DIR] [--state FILE] [--lookback-minutes N] [--include-incomplete] [--dry-run] [--json]");
+      console.log("Usage: session-collector.mjs [--root DIR] [--state FILE] [--lookback-minutes N] [--include-incomplete] [--batch-size N] [--dry-run] [--json]");
       process.exit(0);
     }
   }
@@ -211,6 +249,13 @@ function saveState(path, state) {
   const tmp = `${path}.tmp`;
   writeFileSync(tmp, JSON.stringify({ ...state, updated_at: new Date().toISOString() }, null, 2) + "\n");
   renameSync(tmp, path);
+}
+
+function chunks(items, size) {
+  const chunkSize = Math.max(1, Number(size) || 100);
+  const out = [];
+  for (let i = 0; i < items.length; i += chunkSize) out.push(items.slice(i, i + chunkSize));
+  return out;
 }
 
 function stableEventId(sessionId, turnId, timestamp, usage) {

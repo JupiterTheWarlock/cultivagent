@@ -1,10 +1,13 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { hostname, tmpdir } from "node:os";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { createCultivagentServer } from "../src/server.mjs";
 import { normalizeEvent, normalizeOtelLogs, translateLoopEvent } from "../src/normalize.mjs";
 import { collectSessionEventsFromFile } from "../plugins/codex/scripts/session-collector.mjs";
+import { collectClaudeSessionEvents } from "../plugins/claude-code/scripts/session-collector.mjs";
+import { collectOpenCodeEvents, parseMessageData as parseOpenCodeMessageData } from "../plugins/opencode/session-collector.mjs";
 import { baseEvent as claudeBaseEvent } from "../plugins/claude-code/scripts/lib.mjs";
 
 const dir = mkdtempSync(join(tmpdir(), "cultivagent-"));
@@ -116,6 +119,18 @@ try {
       }],
     }],
   });
+  await post(`${base}/ingest`, {
+    event_id: "smoke-codex-session-dup",
+    source_agent: "codex",
+    source_surface: "session_collector",
+    event_type: "model_response",
+    occurred_at: "2026-07-01T00:02:01.000Z",
+    host_id: "codex-host",
+    session_id: "codex-otel-session",
+    model: "gpt-test",
+    usage: { input_tokens: 4, output_tokens: 1 },
+    meta: { machine_name: "codex-machine" },
+  });
 
   const daily = await get(`${base}/api/daily`);
   const codexRows = daily.daily.filter((x) => x.source_agent === "codex");
@@ -161,6 +176,7 @@ try {
 
   const usageLogs = await get(`${base}/api/usage/logs?pageSize=10`);
   assert.equal(usageLogs.total, 3);
+  assert.equal(usageLogs.logs.some((x) => x.event_id === "smoke-codex-session-dup"), false);
   assert.equal(usageLogs.logs.some((x) => x.event_id === "smoke-hook-1"), false);
   assert.equal(usageLogs.logs.find((x) => x.event_id === "smoke-1").username, "test-machine");
   assert.equal(usageLogs.logs.find((x) => x.model === "gpt-test" && x.input_tokens === 4).username, "desk");
@@ -178,6 +194,10 @@ try {
   assert.equal(openClawUsage.cache_read_tokens, 3);
   assert.equal(openClawUsage.cache_write_tokens, 1);
   assert.equal(openClawUsage.total_tokens, 10);
+  const openClawSource = readFileSync(new URL("../plugins/openclaw/index.ts", import.meta.url), "utf8");
+  for (const needle of ["model_call_ended", "llm_output", "event?.usageState?.lastCallUsage", "event?.result?.meta?.agentMeta?.lastCallUsage", "event?.payload?.meta?.agentMeta?.lastCallUsage"]) {
+    assert.match(openClawSource, new RegExp(escapeRegExp(needle)));
+  }
   assert.equal(normalizeEvent({ meta: { machine_name: "HOST" } }).username, "HOST");
   assert.equal(normalizeEvent({ username: "desk", meta: { machine_name: "HOST" } }).username, "desk");
   const explicitOtelUser = normalizeOtelLogs(otelLogFixture([
@@ -212,7 +232,15 @@ try {
       type: "event_msg",
       payload: {
         type: "token_count",
-        info: { last_token_usage: { input_tokens: 10, cached_input_tokens: 4, output_tokens: 2, total_tokens: 12 } },
+        info: { total_token_usage: { input_tokens: 10, cached_input_tokens: 4, output_tokens: 2, total_tokens: 12 } },
+      },
+    }),
+    JSON.stringify({
+      timestamp: "2026-07-01T00:03:02.500Z",
+      type: "event_msg",
+      payload: {
+        type: "token_count",
+        info: { total_token_usage: { input_tokens: 18, cached_input_tokens: 7, output_tokens: 5, total_tokens: 23 } },
       },
     }),
     JSON.stringify({
@@ -222,13 +250,57 @@ try {
     }),
   ].join("\n") + "\n");
   const codexSessionEvents = collectSessionEventsFromFile(codexSessionPath, { machineName: "HOST", username: "desk" });
-  assert.equal(codexSessionEvents.length, 1);
+  assert.equal(codexSessionEvents.length, 2);
   assert.equal(codexSessionEvents[0].source_surface, "session_collector");
   assert.equal(codexSessionEvents[0].username, "desk");
   assert.equal(codexSessionEvents[0].usage.input_tokens, 6);
   assert.equal(codexSessionEvents[0].usage.cache_read_tokens, 4);
   assert.equal(codexSessionEvents[0].usage.output_tokens, 2);
   assert.equal(codexSessionEvents[0].duration_ms, 123);
+  assert.equal(codexSessionEvents[1].usage.input_tokens, 5);
+  assert.equal(codexSessionEvents[1].usage.cache_read_tokens, 3);
+  assert.equal(codexSessionEvents[1].usage.output_tokens, 3);
+  assert.equal(codexSessionEvents[1].duration_ms, 123);
+
+  const claudeRoot = join(dir, "claude-projects");
+  const claudeProject = join(claudeRoot, "tmp-project");
+  const claudeSubagents = join(claudeProject, "claude-session-1", "subagents");
+  const claudeWorkflow = join(claudeSubagents, "workflows", "wf_1");
+  mkdirSync(claudeWorkflow, { recursive: true });
+  writeFileSync(join(claudeProject, "main.jsonl"), claudeLine("msg_main", 3, 5, 7, 11));
+  writeFileSync(join(claudeSubagents, "agent.jsonl"), claudeLine("msg_agent", 2, 1, 13, 0));
+  writeFileSync(join(claudeWorkflow, "agent-wf.jsonl"), claudeLine("msg_wf", 1, 0, 17, 19, null));
+  const claudeSessionEvents = collectClaudeSessionEvents(claudeRoot, { machineName: "HOST", username: "desk", lookbackMinutes: 0 });
+  assert.equal(claudeSessionEvents.length, 3);
+  assert.equal(claudeSessionEvents.reduce((sum, event) => sum + event.usage.cache_read_tokens, 0), 37);
+  assert.equal(claudeSessionEvents.some((event) => event.turn_id === "msg_wf"), true);
+
+  const opencodeUsage = parseOpenCodeMessageData({
+    role: "assistant",
+    cost: 0.002,
+    tokens: { input: 10, output: 2, reasoning: 3, cache: { read: 4, write: 5 } },
+    modelID: "deepseek-v4-pro",
+    time: { created: 1782864300000, completed: 1782864301000 },
+  });
+  assert.equal(opencodeUsage.usage.output_tokens, 5);
+  assert.equal(opencodeUsage.usage.cache_read_tokens, 4);
+  assert.equal(opencodeUsage.usage.cache_write_tokens, 5);
+
+  const opencodeDb = join(dir, "opencode.db");
+  const odb = new DatabaseSync(opencodeDb);
+  odb.exec("CREATE TABLE session (id TEXT, time_updated INTEGER); CREATE TABLE message (id TEXT, session_id TEXT, time_created INTEGER, time_updated INTEGER, data TEXT);");
+  odb.prepare("INSERT INTO session VALUES (?, ?)").run("opencode-s1", 1782864301000);
+  odb.prepare("INSERT INTO message VALUES (?, ?, ?, ?, ?)").run("m1", "opencode-s1", 1, 2, JSON.stringify({
+    role: "assistant",
+    tokens: { input: 10, output: 2, reasoning: 3, cache: { read: 4, write: 5 } },
+    modelID: "deepseek-v4-pro",
+    providerID: "deepseek",
+    time: { created: 1782864300000, completed: 1782864301000 },
+  }));
+  odb.close();
+  const opencodeEvents = collectOpenCodeEvents(opencodeDb, { machineName: "HOST", username: "desk" });
+  assert.equal(opencodeEvents.length, 1);
+  assert.equal(opencodeEvents[0].usage.total_tokens, 24);
 
   // plugin hooks.json 合法性（取代已移除的 generate-hook-config 测试）
   const claudeHooks = JSON.parse(readFileSync(new URL("../plugins/claude-code/hooks/hooks.json", import.meta.url), "utf8"));
@@ -336,4 +408,27 @@ function otelLogFixture(resourceAttrs) {
       }],
     }],
   };
+}
+
+function claudeLine(id, input, output, cacheRead, cacheWrite, stopReason = "end_turn") {
+  return JSON.stringify({
+    type: "assistant",
+    sessionId: "claude-session-1",
+    timestamp: "2026-07-01T00:04:00.000Z",
+    message: {
+      id,
+      model: "claude-test",
+      stop_reason: stopReason,
+      usage: {
+        input_tokens: input,
+        output_tokens: output,
+        cache_read_input_tokens: cacheRead,
+        cache_creation_input_tokens: cacheWrite,
+      },
+    },
+  }) + "\n";
+}
+
+function escapeRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
