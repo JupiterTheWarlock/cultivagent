@@ -83,12 +83,45 @@ try {
       }],
     }],
   });
+  await post(`${base}/ingest`, {
+    event_id: "smoke-codex-hook-user",
+    source_agent: "codex",
+    source_surface: "hook",
+    event_type: "UserPromptSubmit",
+    occurred_at: "2026-07-01T00:02:00.000Z",
+    host_id: "codex-host",
+    session_id: "codex-otel-session",
+    meta: { username: "desk", machine_name: "codex-machine" },
+  });
+  await post(`${base}/otel/v1/logs`, {
+    resourceLogs: [{
+      resource: { attributes: [
+        { key: "service.name", value: { stringValue: "codex" } },
+        { key: "host.id", value: { stringValue: "codex-host" } },
+        { key: "host.name", value: { stringValue: "localhost" } },
+      ] },
+      scopeLogs: [{
+        logRecords: [{
+          timeUnixNano: "1782864120000000000",
+          body: { stringValue: "codex.sse_event" },
+          attributes: [
+            { key: "event.name", value: { stringValue: "codex.sse_event" } },
+            { key: "sse.event", value: { stringValue: "response.completed" } },
+            { key: "session.id", value: { stringValue: "codex-otel-session" } },
+            { key: "model", value: { stringValue: "gpt-test" } },
+            { key: "input_tokens", value: { intValue: "4" } },
+            { key: "output_tokens", value: { intValue: "1" } },
+          ],
+        }],
+      }],
+    }],
+  });
 
   const daily = await get(`${base}/api/daily`);
-  const codex = daily.daily.find((x) => x.source_agent === "codex");
+  const codexRows = daily.daily.filter((x) => x.source_agent === "codex");
   const claude = daily.daily.find((x) => x.source_agent === "claude-code");
-  assert.equal(codex.total_tokens, 13);
-  assert.equal(codex.event_count, 1);
+  assert.equal(codexRows.reduce((sum, row) => sum + row.total_tokens, 0), 18);
+  assert.equal(codexRows.reduce((sum, row) => sum + row.event_count, 0), 2);
   assert.equal(claude.input_tokens, 7);
   assert.equal(claude.output_tokens, 2);
   assert.equal(claude.cache_read_tokens, 5);
@@ -96,8 +129,8 @@ try {
   assert.equal(claude.event_count, 1);
 
   const requestStats = await get(`${base}/api/request-stats?limit=20`);
-  assert.equal(requestStats.summary.total_requests, 6);
-  assert.equal(requestStats.summary.users, 2);
+  assert.equal(requestStats.summary.total_requests, 8);
+  assert.equal(requestStats.summary.users, 3);
   const hookRequest = requestStats.requests.find((x) => x.event_id === "smoke-hook-1");
   assert.equal(hookRequest.agent, "codex");
   assert.equal(hookRequest.time, "2026-07-01T00:01:00.000Z");
@@ -112,22 +145,25 @@ try {
   assert.equal(userRequestStats.summary.users, 1);
 
   const usageSummary = await get(`${base}/api/usage/summary`);
-  assert.equal(usageSummary.summary.total_requests, 2);
-  assert.equal(usageSummary.summary.total_input_tokens, 17);
-  assert.equal(usageSummary.summary.total_output_tokens, 5);
+  assert.equal(usageSummary.summary.total_requests, 3);
+  assert.equal(usageSummary.summary.total_input_tokens, 21);
+  assert.equal(usageSummary.summary.total_output_tokens, 6);
   assert.equal(usageSummary.summary.total_cache_read_tokens, 5);
-  assert.equal(usageSummary.summary.real_total_tokens, 27);
+  assert.equal(usageSummary.summary.real_total_tokens, 32);
   assert.equal("total_cost" in usageSummary.summary, false);
 
   const codexProviderUsage = await get(`${base}/api/usage/summary?provider=codex`);
-  assert.equal(codexProviderUsage.summary.total_requests, 1);
+  assert.equal(codexProviderUsage.summary.total_requests, 2);
   const codexUserUsage = await get(`${base}/api/usage/summary?username=test-machine`);
   assert.equal(codexUserUsage.summary.total_requests, 1);
+  const codexCorrelatedUserUsage = await get(`${base}/api/usage/summary?username=desk`);
+  assert.equal(codexCorrelatedUserUsage.summary.total_requests, 1);
 
   const usageLogs = await get(`${base}/api/usage/logs?pageSize=10`);
-  assert.equal(usageLogs.total, 2);
+  assert.equal(usageLogs.total, 3);
   assert.equal(usageLogs.logs.some((x) => x.event_id === "smoke-hook-1"), false);
   assert.equal(usageLogs.logs.find((x) => x.event_id === "smoke-1").username, "test-machine");
+  assert.equal(usageLogs.logs.find((x) => x.model === "gpt-test" && x.input_tokens === 4).username, "desk");
 
   assert.equal(translateLoopEvent("claude-code", "PreToolUse").loop_event, "tool.before");
   assert.equal(translateLoopEvent("pi", "before_provider_request").agent_status, "thinking");
@@ -221,7 +257,7 @@ try {
   assert.match(codexHooks.hooks.Stop[0].hooks[0].command, /__CULTIVAGENT_PLUGIN_ROOT__/);
 
   const agents = await get(`${base}/api/agents`);
-  assert.equal(agents.agents.length, 2);
+  assert.equal(agents.agents.length, 3);
 
   const dashboard = await text(`${base}/`);
   assert.match(dashboard, /id="lang"/);
@@ -234,7 +270,7 @@ try {
   assert.match(dashboard, /请求统计/);
 
   const events = await get(`${base}/api/events?limit=20`);
-  const otelEvent = events.events.find((x) => x.source_surface === "otel");
+  const otelEvent = events.events.find((x) => x.source_surface === "otel" && x.source_agent === "claude-code");
   assert.notEqual(otelEvent.host_id, "local");
   assert.equal(otelEvent.meta.machine_name, hostname());
 

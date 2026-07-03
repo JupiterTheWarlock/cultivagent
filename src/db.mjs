@@ -63,6 +63,7 @@ export function openDatabase(dbPath) {
 }
 
 export function insertEvent(db, event) {
+  event = withCorrelatedUsername(db, event);
   const insert = db.prepare(`
     INSERT OR IGNORE INTO events (
       event_id, schema_version, source_agent, source_surface, event_type,
@@ -319,6 +320,18 @@ function rowToEvent(row) {
   };
   event.username = row.username || eventUsername(event);
   return event;
+}
+
+function withCorrelatedUsername(db, event) {
+  if (event.username !== "unknown" || event.session_id === "unknown") return event;
+  const row = db.prepare(`
+    SELECT username FROM events
+    WHERE source_agent = ? AND session_id = ? AND source_surface != 'otel'
+      AND username != '' AND username != 'unknown'
+    ORDER BY occurred_at DESC LIMIT 1
+  `).get(event.source_agent, event.session_id);
+  if (!row?.username) return event;
+  return { ...event, username: row.username, meta: { ...event.meta, username: row.username } };
 }
 
 function listUsageEvents(db, filters) {
