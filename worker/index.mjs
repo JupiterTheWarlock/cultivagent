@@ -27,7 +27,7 @@ async function handleRequest(request, env) {
 
   if (request.method === "GET" && (url.pathname === "/" || url.pathname === "/index.html")) {
     if (!(await isAuthorized(request, env))) return html(loginPageHtml());
-    return env.ASSETS.fetch(assetRequest(request, "/index.html"));
+    return env.ASSETS.fetch(assetRequest(request, "/"));
   }
 
   if (!(await isAuthorized(request, env))) return json({ error: "unauthorized" }, 401);
