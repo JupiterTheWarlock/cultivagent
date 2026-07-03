@@ -18,6 +18,7 @@
 #   CULTIVAGENT_ENDPOINT            non-interactive: server URL
 #   CULTIVAGENT_TOKEN               non-interactive: bearer token
 #   CULTIVAGENT_USERNAME            optional username label (default: machine name)
+#   CULTIVAGENT_ENABLE_CLAUDE_OTEL  optional: set 1 to also configure Claude Code OTel
 #
 # Targets bash — Linux (production) and git-bash on Windows (dev/test).
 
@@ -63,6 +64,7 @@ Env overrides:
   CULTIVAGENT_ENDPOINT            non-interactive: server URL
   CULTIVAGENT_TOKEN               non-interactive: bearer token
   CULTIVAGENT_USERNAME            optional username label (default: machine name)
+  CULTIVAGENT_ENABLE_CLAUDE_OTEL  optional: set 1 to also configure Claude Code OTel
   CLAUDE_SETTINGS_FILE            Claude settings path (default: ~/.claude/settings.json)
 
 Targets bash (Linux production + git-bash on Windows).
@@ -246,9 +248,13 @@ fi
 claude plugin enable "$PLUGIN_ID" --scope user >/dev/null 2>&1 || true
 info "enabled $PLUGIN_ID"
 
-# --- 5. OTel usage export ---
-heading 'Step 5/6 — Claude Code OTel usage export'
-configure_otel
+# --- 5. Optional OTel usage export ---
+heading 'Step 5/6 — optional Claude Code OTel usage export'
+if [ "${CULTIVAGENT_ENABLE_CLAUDE_OTEL:-0}" = 1 ]; then
+  configure_otel
+else
+  info 'skipped Claude Code OTel settings; Stop hook session collector will backfill usage'
+fi
 
 # --- 6. self-check ---
 heading 'Step 6/6 — self-check'

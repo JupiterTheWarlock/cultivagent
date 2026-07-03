@@ -107,7 +107,7 @@ Implemented:
 
 Usage-source notes:
 
-- Claude Code: OTel is the live source; the Stop hook also runs a local session collector to backfill JSONL usage.
+- Claude Code: the Stop hook runs a local session collector to report JSONL usage; native OTel export is optional.
 - Codex: OTel is the live source; the local session collector backfills Codex session JSONL usage when needed.
 - OpenCode: plugin events are live; `plugins/opencode/session-collector.mjs` can backfill `opencode.db` assistant-message usage when present.
 - OpenClaw: native plugin usage is counted from plugin payload usage fields, including nested `usageState` / `agentMeta` usage.

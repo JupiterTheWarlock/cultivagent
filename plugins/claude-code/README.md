@@ -2,7 +2,7 @@
 
 Sends Claude Code hook events (SessionStart / UserPromptSubmit / MessageDisplay / PreToolUse / PostToolUse / PostToolUseFailure / PostToolBatch / Stop / PreCompact / SessionEnd) to a self-hosted [Cultivagent](../..) server for token & usage monitoring.
 
-Cultivagent is a **pure passive ingest sink** — this plugin forwards hook events to `POST /ingest`, configures Claude Code OTel usage export to `/otel/v1/metrics` and `/otel/v1/logs`, and runs a JSONL session collector on `Stop` to backfill usage when live telemetry misses it. It does not expose any MCP tool or agent-callable interface.
+Cultivagent is a **pure passive ingest sink** — this plugin forwards hook events to `POST /ingest` and runs a JSONL session collector on `Stop` to report token usage. It does not expose any MCP tool or agent-callable interface.
 
 ## Install
 
@@ -12,7 +12,7 @@ Cultivagent is a **pure passive ingest sink** — this plugin forwards hook even
 bash <(curl -fsSL https://raw.githubusercontent.com/JupiterTheWarlock/cultivagent/main/plugins/claude-code/setup-helper/install.sh)
 ```
 
-The installer checks dependencies, writes `~/.cultivagent/config.json` (endpoint + token + optional username), clones the repo to `~/.cultivagent/repo`, registers the local marketplace, runs `claude plugin install`, and enables Claude Code OTel usage export in `~/.claude/settings.json`. Re-running is safe (idempotent) and is the upgrade path for syncing the installed plugin copy. Non-interactive when piped (`curl | bash`) — uses env / existing config / defaults.
+The installer checks dependencies, writes `~/.cultivagent/config.json` (endpoint + token + optional username), clones the repo to `~/.cultivagent/repo`, registers the local marketplace, and runs `claude plugin install`. It does not write OTel variables into `~/.claude/settings.json` by default. Re-running is safe (idempotent) and is the upgrade path for syncing the installed plugin copy. Non-interactive when piped (`curl | bash`) — uses env / existing config / defaults.
 
 > Windows: run under **git-bash** (the bundled bash from Git for Windows). The installer targets bash — Linux for production, git-bash for dev/test.
 
@@ -65,8 +65,14 @@ The actual Claude hook name from the stdin payload is used as `event_type`; the 
 
 ## Usage accounting
 
-Lifecycle hooks (`UserPromptSubmit`, `MessageDisplay`, `Stop`, ...) appear in request logs but carry zero tokens. Usage totals come from Claude OTel records and from the Stop-hook session collector. Manual backfill:
+Lifecycle hooks (`UserPromptSubmit`, `MessageDisplay`, `Stop`, ...) appear in request logs but carry zero tokens. Usage totals come from the Stop-hook session collector. Manual backfill:
 
 ```bash
 node ~/.cultivagent/repo/plugins/claude-code/scripts/session-collector.mjs --lookback-minutes 120 --batch-size 10
+```
+
+Claude Code native OTel export is optional. To opt in during install:
+
+```bash
+CULTIVAGENT_ENABLE_CLAUDE_OTEL=1 bash plugins/claude-code/setup-helper/install.sh
 ```
