@@ -233,7 +233,7 @@ if claude plugin marketplace list 2>/dev/null | grep -qF "$MARKETPLACE_NAME"; th
   claude plugin marketplace update "$MARKETPLACE_NAME" || warn 'marketplace update returned non-zero — continuing'
 else
   info 'marketplace add'
-  ( cd "$REPO_DIR" && claude plugin marketplace add "$REPO_DIR/plugins" ) || warn 'marketplace add returned non-zero — continuing'
+  ( cd "$REPO_DIR" && claude plugin marketplace add ./plugins ) || warn 'marketplace add returned non-zero — continuing'
 fi
 
 if claude plugin list 2>/dev/null | grep -qF "$PLUGIN_ID"; then

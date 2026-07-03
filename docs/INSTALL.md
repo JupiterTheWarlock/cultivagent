@@ -70,7 +70,7 @@ Each agent has a one-line installer that writes `~/.cultivagent/config.json` (en
 bash <(curl -fsSL https://raw.githubusercontent.com/JupiterTheWarlock/cultivagent/main/plugins/claude-code/setup-helper/install.sh)
 ```
 
-Manual: `claude plugin marketplace add <repo>/plugins` → `claude plugin install claude-code@cultivagent-plugins-local`. The Stop hook runs the session collector to report JSONL usage, so the installer does not write OTel variables into `~/.claude/settings.json` by default. Re-run the installer after upgrades to sync the installed plugin copy under `~/.cultivagent/repo`. See [plugins/claude-code/README.md](../plugins/claude-code/README.md).
+Manual from the repo root: `claude plugin marketplace add ./plugins` → `claude plugin install claude-code@cultivagent-plugins-local`. The Stop hook runs the session collector to report JSONL usage, so the installer does not write OTel variables into `~/.claude/settings.json` by default. Re-run the installer after upgrades to sync the installed plugin copy under `~/.cultivagent/repo`. See [plugins/claude-code/README.md](../plugins/claude-code/README.md).
 
 ### Codex
 

@@ -308,7 +308,7 @@ try {
   assert.ok(claudeHooks.hooks.SessionEnd, "claude-code hooks.json missing SessionEnd");
   assert.ok(claudeHooks.hooks.PreToolUse, "claude-code hooks.json missing PreToolUse");
   assert.ok(claudeHooks.hooks.PostToolUse, "claude-code hooks.json missing PostToolUse");
-  assert.ok(claudeHooks.hooks.MessageDisplay, "claude-code hooks.json missing MessageDisplay");
+  assert.ok(claudeHooks.hooks.Stop, "claude-code hooks.json missing Stop");
   assert.match(claudeHooks.hooks.SessionStart[0].hooks[0].command, /\$\{CLAUDE_PLUGIN_ROOT\}/);
   assert.match(claudeHooks.hooks.Stop[0].hooks[1].command, /session-collector\.mjs/);
   const claudeToolEvent = claudeBaseEvent("claude-code", {
