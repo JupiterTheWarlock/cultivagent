@@ -29,8 +29,6 @@ PLUGIN_ID="$PLUGIN_NAME@$MARKETPLACE_NAME"
 MP_ROOT="$CV_HOME/codex-marketplace"
 PLUGIN_DEST="$MP_ROOT/$PLUGIN_NAME"
 CODEX_CONFIG="${CODEX_CONFIG_FILE:-$HOME/.codex/config.toml}"
-COLLECTOR_SERVICE="cultivagent-codex-session-collector.service"
-COLLECTOR_TIMER="cultivagent-codex-session-collector.timer"
 
 # --- colors ---
 if [ -t 1 ]; then
@@ -88,18 +86,70 @@ write_config() {
   chmod 600 "$CONFIG_FILE" 2>/dev/null || true
 }
 
+configure_otel() {
+  node - "$CODEX_CONFIG" "$CONFIG_FILE" <<'NODE'
+const fs = require("node:fs");
+const path = require("node:path");
+
+const [configPath, cultivagentConfigPath] = process.argv.slice(2);
+let cfg = {};
+try { cfg = JSON.parse(fs.readFileSync(cultivagentConfigPath, "utf8")); } catch {}
+const endpoint = String(cfg.endpoint || "http://127.0.0.1:3737").replace(/\/$/, "") + "/otel/v1/logs";
+const token = cfg.token || "";
+
+let text = "";
+try { text = fs.readFileSync(configPath, "utf8"); } catch {}
+
+function stripOtel(src) {
+  const lines = src.split(/\n/);
+  const out = [];
+  let skip = false;
+  for (const line of lines) {
+    const header = line.match(/^\s*\[([^\]]+)\]\s*$/);
+    if (header) skip = header[1] === "otel" || header[1].startsWith("otel.");
+    if (!skip) out.push(line);
+  }
+  return out.join("\n").replace(/\n*$/, "\n");
+}
+
+function q(value) {
+  return JSON.stringify(String(value));
+}
+
+const otel = [
+  "[otel]",
+  "environment = \"cultivagent\"",
+  "log_user_prompt = false",
+  `exporter = { otlp-http = { endpoint = ${q(endpoint)}, protocol = "json"${token ? `, headers = { "Authorization" = ${q(`Bearer ${token}`)} }` : ""} } }`,
+  "trace_exporter = \"none\"",
+  "metrics_exporter = \"none\"",
+  "",
+].join("\n");
+
+fs.mkdirSync(path.dirname(configPath), { recursive: true });
+fs.writeFileSync(configPath, `${stripOtel(text).trimEnd()}\n\n${otel}`);
+NODE
+  info "enabled Codex OTel usage export in $CODEX_CONFIG"
+}
+
+hook_command_root() {
+  if command -v cygpath >/dev/null 2>&1; then
+    cygpath -m "$1" 2>/dev/null && return 0
+  fi
+  printf '%s\n' "$1"
+}
+
 # --- 1. dependencies ---
-heading 'Step 1/7 — dependencies'
+heading 'Step 1/6 — dependencies'
 for cmd in git node; do
   command -v "$cmd" >/dev/null 2>&1 || { err "$cmd not found (required)"; exit 1; }
 done
-NODE_BIN=$(command -v node)
 NODE_MAJOR=$(node -e 'process.stdout.write(String(process.versions.node.split(".")[0]))')
 if [ "$NODE_MAJOR" -lt 24 ]; then err "node >= 24 required (got $(node -v))"; exit 1; fi
 info "node $(node -v) · git OK"
 
 # --- 2. config.json ---
-heading 'Step 2/7 — config (~/.cultivagent/config.json)'
+heading 'Step 2/6 — config (~/.cultivagent/config.json)'
 mkdir -p "$CV_HOME"
 
 if [ -f "$CONFIG_FILE" ]; then
@@ -142,7 +192,7 @@ if [ "$RECONFIG" = yes ]; then
 fi
 
 # --- 3. repo ---
-heading 'Step 3/7 — repo'
+heading 'Step 3/6 — repo'
 if [ -d "$REPO_DIR/.git" ]; then
   info "updating $REPO_DIR"
   git -C "$REPO_DIR" fetch --quiet origin "$REPO_REF"
@@ -153,22 +203,25 @@ else
 fi
 
 # --- 4. copy + render ---
-heading 'Step 4/7 — render plugin (copy + substitute __CULTIVAGENT_PLUGIN_ROOT__)'
+heading 'Step 4/6 — render plugin (copy + substitute __CULTIVAGENT_PLUGIN_ROOT__)'
 mkdir -p "$MP_ROOT"
 rm -rf "$PLUGIN_DEST"
 cp -r "$REPO_DIR/plugins/codex" "$PLUGIN_DEST"
 # sed 渲染占位符。用 | 作 delimiter，避免 replacement 里转义路径中的 /
 # （git-bash 下传统 \/ 转义在 replacement 中行为异常）。.bak 后缀兼容 GNU/BSD sed。
 if [ -f "$PLUGIN_DEST/hooks/hooks.json" ]; then
-  sed -i.bak "s|__CULTIVAGENT_PLUGIN_ROOT__|$PLUGIN_DEST|g" "$PLUGIN_DEST/hooks/hooks.json"
+  HOOK_ROOT=$(hook_command_root "$PLUGIN_DEST")
+  HOOK_ROOT_ESCAPED=$(printf '%s\n' "$HOOK_ROOT" | sed 's/[&|]/\\&/g')
+  sed -i.bak "s|__CULTIVAGENT_PLUGIN_ROOT__|$HOOK_ROOT_ESCAPED|g" "$PLUGIN_DEST/hooks/hooks.json"
   rm -f "$PLUGIN_DEST/hooks/hooks.json.bak"
   info "rendered $PLUGIN_DEST/hooks/hooks.json"
+  info "hook command root: $HOOK_ROOT"
 else
   err "hooks.json not found at $PLUGIN_DEST/hooks/hooks.json"; exit 1
 fi
 
 # --- 5. marketplace + config.toml + install ---
-heading 'Step 5/7 — codex plugin'
+heading 'Step 5/6 — codex plugin + OTel usage export'
 if ! command -v codex >/dev/null 2>&1; then
   err "'codex' CLI not found. Install Codex first, then re-run."
   err "Manual commands once codex is available:"
@@ -249,6 +302,7 @@ fs.mkdirSync(require("node:path").dirname(path), { recursive: true });
 fs.writeFileSync(path, text);
 NODE
 info "enabled plugin + features.plugin_hooks in $CODEX_CONFIG"
+configure_otel
 
 if codex plugin add --help >/dev/null 2>&1; then
   codex plugin add "$PLUGIN_ID" >/dev/null 2>&1 || info "plugin add: already installed or queued"
@@ -256,45 +310,8 @@ else
   codex plugin install "$PLUGIN_ID" >/dev/null 2>&1 || info "plugin install: already installed or queued"
 fi
 
-# --- 6. session collector ---
-heading 'Step 6/7 — codex session collector'
-if [ "$(uname -s 2>/dev/null || echo unknown)" = "Linux" ] && command -v systemctl >/dev/null 2>&1; then
-  SYSTEMD_USER_DIR="$HOME/.config/systemd/user"
-  mkdir -p "$SYSTEMD_USER_DIR"
-  cat > "$SYSTEMD_USER_DIR/$COLLECTOR_SERVICE" <<EOF
-[Unit]
-Description=Cultivagent Codex session collector
-
-[Service]
-Type=oneshot
-ExecStart=$NODE_BIN $PLUGIN_DEST/scripts/session-collector.mjs --lookback-minutes 10080
-EOF
-  cat > "$SYSTEMD_USER_DIR/$COLLECTOR_TIMER" <<EOF
-[Unit]
-Description=Run Cultivagent Codex session collector every minute
-
-[Timer]
-OnBootSec=30s
-OnUnitActiveSec=60s
-AccuracySec=10s
-Persistent=true
-
-[Install]
-WantedBy=timers.target
-EOF
-  if systemctl --user daemon-reload >/dev/null 2>&1; then
-    systemctl --user enable --now "$COLLECTOR_TIMER" >/dev/null 2>&1 || warn "could not enable $COLLECTOR_TIMER"
-    systemctl --user start "$COLLECTOR_SERVICE" >/dev/null 2>&1 || warn "could not start $COLLECTOR_SERVICE"
-    info "installed $COLLECTOR_TIMER"
-  else
-    warn "systemd user daemon-reload failed; run collector manually: node $PLUGIN_DEST/scripts/session-collector.mjs"
-  fi
-else
-  warn "systemd user not available; run collector manually: node $PLUGIN_DEST/scripts/session-collector.mjs"
-fi
-
-# --- 7. self-check ---
-heading 'Step 7/7 — self-check'
+# --- 6. self-check ---
+heading 'Step 6/6 — self-check'
 ENDPOINT_CHECK=$(cfg_get "$CONFIG_FILE" endpoint); ENDPOINT_CHECK="${ENDPOINT_CHECK:-http://127.0.0.1:3737}"
 TOKEN_CHECK=$(cfg_get "$CONFIG_FILE" token)
 info "endpoint: $ENDPOINT_CHECK"
@@ -311,4 +328,4 @@ node -e '
 ' "$CONFIG_FILE" || warn 'self-check failed'
 
 echo
-info 'Done. Restart Codex to activate hooks; the session collector is active when systemd timer is enabled.'
+info 'Done. Restart Codex to activate hooks and OTel usage export.'

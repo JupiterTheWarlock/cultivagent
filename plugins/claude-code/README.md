@@ -2,7 +2,7 @@
 
 Sends Claude Code hook events (SessionStart / UserPromptSubmit / MessageDisplay / PreToolUse / PostToolUse / PostToolUseFailure / PostToolBatch / Stop / PreCompact / SessionEnd) to a self-hosted [Cultivagent](../..) server for token & usage monitoring.
 
-Cultivagent is a **pure passive ingest sink** — this plugin only forwards hook events to `POST /ingest`. It does not expose any MCP tool or agent-callable interface.
+Cultivagent is a **pure passive ingest sink** — this plugin forwards hook events to `POST /ingest` and configures Claude Code OTel usage export to `/otel/v1/metrics` and `/otel/v1/logs`. It does not expose any MCP tool or agent-callable interface.
 
 ## Install
 
@@ -12,7 +12,7 @@ Cultivagent is a **pure passive ingest sink** — this plugin only forwards hook
 bash <(curl -fsSL https://raw.githubusercontent.com/JupiterTheWarlock/cultivagent/main/plugins/claude-code/setup-helper/install.sh)
 ```
 
-The installer checks dependencies, writes `~/.cultivagent/config.json` (endpoint + token + optional username), clones the repo to `~/.cultivagent/repo`, registers the local marketplace, and runs `claude plugin install`. Re-running is safe (idempotent). Non-interactive when piped (`curl | bash`) — uses env / existing config / defaults.
+The installer checks dependencies, writes `~/.cultivagent/config.json` (endpoint + token + optional username), clones the repo to `~/.cultivagent/repo`, registers the local marketplace, runs `claude plugin install`, and enables Claude Code OTel usage export in `~/.claude/settings.json`. Re-running is safe (idempotent). Non-interactive when piped (`curl | bash`) — uses env / existing config / defaults.
 
 > Windows: run under **git-bash** (the bundled bash from Git for Windows). The installer targets bash — Linux for production, git-bash for dev/test.
 

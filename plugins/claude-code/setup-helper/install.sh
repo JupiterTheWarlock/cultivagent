@@ -28,6 +28,7 @@ REPO_URL="${CULTIVAGENT_REPO_URL:-https://github.com/JupiterTheWarlock/cultivage
 REPO_REF="${CULTIVAGENT_REPO_REF:-${CULTIVAGENT_REPO_BRANCH:-main}}"
 REPO_DIR="${CULTIVAGENT_REPO_DIR:-$CV_HOME/repo}"
 CONFIG_FILE="$CV_HOME/config.json"
+CLAUDE_SETTINGS="${CLAUDE_SETTINGS_FILE:-$HOME/.claude/settings.json}"
 MARKETPLACE_NAME="cultivagent-plugins-local"
 PLUGIN_ID="claude-code@$MARKETPLACE_NAME"
 
@@ -62,6 +63,7 @@ Env overrides:
   CULTIVAGENT_ENDPOINT            non-interactive: server URL
   CULTIVAGENT_TOKEN               non-interactive: bearer token
   CULTIVAGENT_USERNAME            optional username label (default: machine name)
+  CLAUDE_SETTINGS_FILE            Claude settings path (default: ~/.claude/settings.json)
 
 Targets bash (Linux production + git-bash on Windows).
 EOF
@@ -74,7 +76,7 @@ esac
 # --- legacy fallback: Claude Code < 2.0 没有 `claude plugin` ---
 # 用 jq 把 ${CLAUDE_PLUGIN_ROOT} 替换成绝对路径，再把 hooks 合并进 settings.json。
 install_legacy() {
-  local settings="$HOME/.claude/settings.json"
+  local settings="$CLAUDE_SETTINGS"
   local plugin_dir="$REPO_DIR/plugins/claude-code"
   local tmp_h
   info 'legacy mode: merge hooks into ~/.claude/settings.json'
@@ -97,8 +99,41 @@ install_legacy() {
   info "merged into $settings (backup saved)"
 }
 
+configure_otel() {
+  node - "$CONFIG_FILE" "$CLAUDE_SETTINGS" <<'NODE'
+const fs = require("node:fs");
+const path = require("node:path");
+
+const [configPath, settingsPath] = process.argv.slice(2);
+let cfg = {};
+try { cfg = JSON.parse(fs.readFileSync(configPath, "utf8")); } catch {}
+const endpoint = String(cfg.endpoint || "http://127.0.0.1:3737").replace(/\/$/, "");
+
+let settings = {};
+try { settings = JSON.parse(fs.readFileSync(settingsPath, "utf8")); } catch {}
+settings.env = settings.env && typeof settings.env === "object" && !Array.isArray(settings.env) ? settings.env : {};
+Object.assign(settings.env, {
+  CLAUDE_CODE_ENABLE_TELEMETRY: "1",
+  OTEL_METRICS_EXPORTER: "otlp",
+  OTEL_LOGS_EXPORTER: "otlp",
+  OTEL_EXPORTER_OTLP_METRICS_PROTOCOL: "http/json",
+  OTEL_EXPORTER_OTLP_METRICS_ENDPOINT: `${endpoint}/otel/v1/metrics`,
+  OTEL_EXPORTER_OTLP_LOGS_PROTOCOL: "http/json",
+  OTEL_EXPORTER_OTLP_LOGS_ENDPOINT: `${endpoint}/otel/v1/logs`,
+  OTEL_METRIC_EXPORT_INTERVAL: "10000",
+  OTEL_LOGS_EXPORT_INTERVAL: "5000",
+});
+if (cfg.token) settings.env.OTEL_EXPORTER_OTLP_HEADERS = `Authorization=Bearer ${cfg.token}`;
+else delete settings.env.OTEL_EXPORTER_OTLP_HEADERS;
+
+fs.mkdirSync(path.dirname(settingsPath), { recursive: true });
+fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + "\n");
+NODE
+  info "enabled Claude Code OTel in $CLAUDE_SETTINGS"
+}
+
 # --- 1. dependencies ---
-heading 'Step 1/5 — dependencies'
+heading 'Step 1/6 — dependencies'
 for cmd in git jq curl node; do
   command -v "$cmd" >/dev/null 2>&1 || { err "$cmd not found (required)"; exit 1; }
 done
@@ -107,7 +142,7 @@ if [ "$NODE_MAJOR" -lt 24 ]; then err "node >= 24 required (got $(node -v))"; ex
 info "node $(node -v) · git · jq · curl OK"
 
 # --- 2. config.json ---
-heading 'Step 2/5 — config (~/.cultivagent/config.json)'
+heading 'Step 2/6 — config (~/.cultivagent/config.json)'
 mkdir -p "$CV_HOME"
 
 write_config() {
@@ -157,7 +192,7 @@ if [ "$RECONFIG" = yes ]; then
 fi
 
 # --- 3. repo ---
-heading 'Step 3/5 — repo'
+heading 'Step 3/6 — repo'
 if [ -d "$REPO_DIR/.git" ]; then
   info "updating $REPO_DIR"
   git -C "$REPO_DIR" fetch --quiet origin "$REPO_REF"
@@ -168,7 +203,7 @@ else
 fi
 
 # --- 4. marketplace + plugin ---
-heading 'Step 4/5 — claude plugin'
+heading 'Step 4/6 — claude plugin'
 if ! command -v claude >/dev/null 2>&1; then
   err "'claude' CLI not found. Install Claude Code >= 2.0 first, then re-run."
   err "Once available, the manual commands are:"
@@ -197,8 +232,12 @@ fi
 claude plugin enable "$PLUGIN_ID" --scope user >/dev/null 2>&1 || true
 info "enabled $PLUGIN_ID"
 
-# --- 5. self-check ---
-heading 'Step 5/5 — self-check'
+# --- 5. OTel usage export ---
+heading 'Step 5/6 — Claude Code OTel usage export'
+configure_otel
+
+# --- 6. self-check ---
+heading 'Step 6/6 — self-check'
 node "$REPO_DIR/plugins/claude-code/scripts/status.mjs" || warn 'self-check failed (server may be down — hooks will retry)'
 
 echo

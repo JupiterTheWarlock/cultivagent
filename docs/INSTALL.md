@@ -70,7 +70,7 @@ Each agent has a one-line installer that writes `~/.cultivagent/config.json` (en
 bash <(curl -fsSL https://raw.githubusercontent.com/JupiterTheWarlock/cultivagent/main/plugins/claude-code/setup-helper/install.sh)
 ```
 
-Manual: `claude plugin marketplace add <repo>/plugins` → `claude plugin install claude-code@cultivagent-plugins-local`. See [plugins/claude-code/README.md](../plugins/claude-code/README.md).
+Manual: `claude plugin marketplace add <repo>/plugins` → `claude plugin install claude-code@cultivagent-plugins-local`. The installer also enables Claude Code OTel export so token usage reaches `/otel/v1/metrics` and `/otel/v1/logs`. See [plugins/claude-code/README.md](../plugins/claude-code/README.md).
 
 ### Codex
 
@@ -78,7 +78,7 @@ Manual: `claude plugin marketplace add <repo>/plugins` → `claude plugin instal
 bash <(curl -fsSL https://raw.githubusercontent.com/JupiterTheWarlock/cultivagent/main/plugins/codex/setup-helper/install.sh)
 ```
 
-Codex 0.130 does not inject a plugin-root env var, so the installer copies the plugin and renders `__CULTIVAGENT_PLUGIN_ROOT__` into an absolute path. On Linux it also installs `cultivagent-codex-session-collector.timer`, which reads Codex session JSONL token counters so `codex exec` usage is captured even when plugin hooks do not fire. See [plugins/codex/README.md](../plugins/codex/README.md).
+Codex 0.130 does not inject a plugin-root env var, so the installer copies the plugin and renders `__CULTIVAGENT_PLUGIN_ROOT__` into an absolute path. It also configures Codex `[otel]` log export so `codex.sse_event` token counts reach `/otel/v1/logs`. See [plugins/codex/README.md](../plugins/codex/README.md).
 
 ### OpenCode
 
