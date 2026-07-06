@@ -117,8 +117,12 @@ export function listEvents(db, options = 100) {
   }
   const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
   const order = filters.order === "asc" ? "ASC" : "DESC";
+  const columns = filters.compact
+    ? `event_id, source_agent, source_surface, event_type, provider, model, status,
+      duration_ms, occurred_at, username, host_id, workspace_id, session_id, usage_json`
+    : "*";
   const rows = db.prepare(`
-    SELECT * FROM events ${where} ORDER BY occurred_at ${order} LIMIT ?
+    SELECT ${columns} FROM events ${where} ORDER BY occurred_at ${order} LIMIT ?
   `).all(...params, clampLimit(filters.limit, 1000, 20000));
   return rows.map(rowToEvent);
 }
@@ -316,8 +320,8 @@ function upsertAgentState(db, event) {
 function rowToEvent(row) {
   const event = {
     ...row,
-    usage: JSON.parse(row.usage_json),
-    meta: JSON.parse(row.meta_json),
+    usage: JSON.parse(row.usage_json || "{}"),
+    meta: JSON.parse(row.meta_json || "{}"),
   };
   event.username = row.username || eventUsername(event);
   return event;

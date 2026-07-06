@@ -64,6 +64,16 @@ Each agent has a one-line installer that writes `~/.cultivagent/config.json` (en
 
 > Windows: run the installers under **git-bash** (the bash from Git for Windows).
 
+For an existing hosted server, set the shared config once before running agent installers:
+
+```bash
+export CULTIVAGENT_ENDPOINT=https://cv.jthewl.cc
+export CULTIVAGENT_TOKEN=<token from the hosted server>
+export CULTIVAGENT_USERNAME=<machine label>
+```
+
+Both Claude Code and Codex installers read those env vars and write the same `~/.cultivagent/config.json`. If the file already exists, rerunning installers keeps the existing config unless you reconfigure interactively.
+
 ### Claude Code
 
 ```bash
@@ -78,7 +88,33 @@ Manual from the repo root: `claude plugin marketplace add ./plugins` → `claude
 bash <(curl -fsSL https://raw.githubusercontent.com/JupiterTheWarlock/cultivagent/main/plugins/codex/setup-helper/install.sh)
 ```
 
-Codex 0.130 does not inject a plugin-root env var, so the installer copies the plugin and renders `__CULTIVAGENT_PLUGIN_ROOT__` into an absolute path. The Stop hook runs the session collector to report usage, so `[otel]` is not written by default. See [plugins/codex/README.md](../plugins/codex/README.md).
+Codex 0.130 does not inject a plugin-root env var, so the installer copies the plugin and renders `__CULTIVAGENT_PLUGIN_ROOT__` into an absolute path. The Stop hook runs the session collector to report usage, so `[otel]` is not written by default. Re-run the installer after upgrades; it removes and re-adds `codex@cultivagent-plugins-local` so Codex's versioned plugin cache is refreshed. See [plugins/codex/README.md](../plugins/codex/README.md).
+
+After install, restart the agent app/CLI so hook changes are loaded.
+
+Quick checks after a Codex install:
+
+```bash
+codex plugin add codex@cultivagent-plugins-local --json
+node ~/.cultivagent/codex-marketplace/codex/scripts/session-collector.mjs --lookback-minutes 10 --include-incomplete --dry-run --json
+```
+
+The installed Codex shape should match `plugins/codex/README.md`: one Stop hook command (`hook.mjs stop`) and the collector launched inside `hook.mjs` with `--delay-ms 3000 --include-incomplete`.
+
+Claude Code check:
+
+```bash
+node ~/.cultivagent/repo/plugins/claude-code/scripts/status.mjs
+claude plugin list | grep cultivagent
+```
+
+If a Claude Code local marketplace plugin changed without a version bump, refresh the installed cache:
+
+```bash
+claude plugin marketplace update cultivagent-plugins-local
+claude plugin uninstall claude-code@cultivagent-plugins-local
+claude plugin install claude-code@cultivagent-plugins-local
+```
 
 ### OpenCode
 

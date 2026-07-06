@@ -327,8 +327,12 @@ try {
   assert.match(claudeToolEvent.meta.tool_input_preview, /echo hi/);
   const codexHooks = JSON.parse(readFileSync(new URL("../plugins/codex/hooks/hooks.json", import.meta.url), "utf8"));
   assert.ok(codexHooks.hooks.Stop, "codex hooks.json missing Stop");
+  assert.equal(codexHooks.hooks.Stop[0].hooks.length, 1);
   assert.match(codexHooks.hooks.Stop[0].hooks[0].command, /__CULTIVAGENT_PLUGIN_ROOT__/);
-  assert.match(codexHooks.hooks.Stop[0].hooks[1].command, /session-collector\.mjs/);
+  const codexHookScript = readFileSync(new URL("../plugins/codex/scripts/hook.mjs", import.meta.url), "utf8");
+  assert.match(codexHookScript, /session-collector\.mjs/);
+  assert.match(codexHookScript, /--delay-ms/);
+  assert.match(codexHookScript, /--include-incomplete/);
 
   const agents = await get(`${base}/api/agents`);
   assert.equal(agents.agents.length, 3);
@@ -342,6 +346,9 @@ try {
   assert.match(dashboard, /data-i18n="user"/);
   assert.match(dashboard, /使用统计/);
   assert.match(dashboard, /请求统计/);
+  assert.match(dashboard, /composedPath/);
+  const workerSource = readFileSync(new URL("../worker/index.mjs", import.meta.url), "utf8");
+  assert.match(workerSource, /cache-control", "no-store"/);
 
   const events = await get(`${base}/api/events?limit=20`);
   const otelEvent = events.events.find((x) => x.source_surface === "otel" && x.source_agent === "claude-code");
@@ -351,6 +358,10 @@ try {
   const rangedEvents = await get(`${base}/api/events?start=2026-07-01T00:00:30.000Z&end=2026-07-01T00:01:30.000Z&limit=20`);
   assert.equal(rangedEvents.events.some((x) => x.event_id === "smoke-hook-1"), true);
   assert.equal(rangedEvents.events.some((x) => x.event_id === "smoke-1"), false);
+  const compactRangedEvents = await get(`${base}/api/events?start=1782864030&end=1782864090&limit=20&compact=1`);
+  assert.equal(compactRangedEvents.events.some((x) => x.event_id === "smoke-hook-1"), true);
+  assert.equal(compactRangedEvents.events.some((x) => x.event_id === "smoke-1"), false);
+  assert.equal("meta_json" in compactRangedEvents.events[0], false);
   const incrementalEvents = await get(`${base}/api/events?since=2026-07-01T00:00:30.000Z&limit=20`);
   assert.equal(incrementalEvents.events.some((x) => x.event_id === "smoke-hook-1"), true);
   assert.equal(incrementalEvents.events.some((x) => x.event_id === "smoke-1"), false);

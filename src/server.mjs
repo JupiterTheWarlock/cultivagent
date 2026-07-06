@@ -160,6 +160,7 @@ function eventFilters(params) {
     end: dateParam(params.get("end")),
     since: dateParam(params.get("since")),
     limit: params.get("limit"),
+    compact: params.get("compact") === "1",
     order: ranged ? "asc" : "desc",
   };
 }

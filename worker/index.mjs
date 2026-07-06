@@ -27,7 +27,7 @@ async function handleRequest(request, env) {
 
   if (request.method === "GET" && (url.pathname === "/" || url.pathname === "/index.html")) {
     if (!(await isAuthorized(request, env))) return html(loginPageHtml());
-    return env.ASSETS.fetch(assetRequest(request, "/"));
+    return noStore(await env.ASSETS.fetch(assetRequest(request, "/")));
   }
 
   if (!(await isAuthorized(request, env))) return json({ error: "unauthorized" }, 401);
@@ -218,7 +218,11 @@ async function listEvents(db, options = {}) {
   const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
   const order = options.order === "asc" ? "ASC" : "DESC";
   const limit = clampLimit(options.limit, 1000, 20000);
-  const { results } = await db.prepare(`SELECT * FROM events ${where} ORDER BY occurred_at ${order} LIMIT ?`).bind(...params, limit).all();
+  const columns = options.compact
+    ? `event_id, source_agent, source_surface, event_type, provider, model, status,
+      duration_ms, occurred_at, username, host_id, workspace_id, session_id, usage_json`
+    : "*";
+  const { results } = await db.prepare(`SELECT ${columns} FROM events ${where} ORDER BY occurred_at ${order} LIMIT ?`).bind(...params, limit).all();
   return results.map(rowToEvent);
 }
 
@@ -531,6 +535,7 @@ function eventFilters(params) {
     end: dateParam(params.get("end")),
     since: dateParam(params.get("since")),
     limit: params.get("limit"),
+    compact: params.get("compact") === "1",
     order: ranged ? "asc" : "desc",
   };
 }
@@ -595,6 +600,12 @@ function text(body, type, status = 200) {
 
 function html(body) {
   return text(body, "text/html; charset=utf-8");
+}
+
+function noStore(response) {
+  const headers = new Headers(response.headers);
+  headers.set("cache-control", "no-store");
+  return new Response(response.body, { status: response.status, headers });
 }
 
 function assetRequest(request, pathname) {

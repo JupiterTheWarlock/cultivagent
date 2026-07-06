@@ -905,6 +905,7 @@
       params.set('start', String(start));
       params.set('end', String(end));
       params.set('limit', '20000');
+      params.set('compact', '1');
       if (since != null) params.set('since', String(since));
       const payload = await get('/api/events?' + params.toString());
       for (const event of payload.events || []) {
@@ -1475,6 +1476,8 @@
       ['start', 'end'].forEach((field) => {
         const dateInput = popover.querySelector('#' + field + 'DateInput');
         const timeInput = popover.querySelector('#' + field + 'TimeInput');
+        if (dateInput) dateInput.addEventListener('click', (event) => event.stopPropagation());
+        if (timeInput) timeInput.addEventListener('click', (event) => event.stopPropagation());
         if (dateInput) dateInput.addEventListener('change', (event) => {
           if (field === 'end' && d.liveEnd) return;
           const ts = parseDateInput(field === 'start' ? d.start : d.end, event.target.value);
@@ -1918,7 +1921,9 @@
     }
 
     document.addEventListener('click', (event) => {
-      const trigger = event.target.closest('.select-trigger');
+      const path = typeof event.composedPath === 'function' ? event.composedPath() : [];
+      const closest = (selector) => event.target.closest(selector) || path.find((node) => node?.nodeType === 1 && node.matches(selector));
+      const trigger = closest('.select-trigger');
       if (trigger) {
         const wrap = trigger.closest('.select-wrap');
         const next = !wrap.classList.contains('open');
@@ -1927,14 +1932,14 @@
         wrap.classList.toggle('open', next);
         return;
       }
-      if (event.target.closest('#dateTrigger')) {
+      if (closest('#dateTrigger')) {
         closeDropdowns();
         const popover = document.getElementById('datePopover');
         if (popover.classList.contains('hidden')) openDatePicker();
         else closeDatePicker();
         return;
       }
-      if (!event.target.closest('.select-wrap') && !event.target.closest('.date-wrap')) {
+      if (!closest('.select-wrap') && !closest('.date-wrap')) {
         closeDropdowns();
         closeDatePicker();
       }
