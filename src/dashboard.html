@@ -825,6 +825,7 @@
       { type: 'openclaw', agent: 'openclaw', label: 'OpenClaw', icon: BRAND.openclaw }
     ];
     const REFRESH_INTERVAL_OPTIONS_MS = [0, 5000, 10000, 30000, 60000];
+    const BACKFILL_OVERLAP_SECONDS = 10 * 60;
     const PRESETS = ['today', '1d', '7d', '14d', '30d'];
     const PRESET_LABELS = { today: '当天', '1d': '1d', '7d': '7d', '14d': '14d', '30d': '30d', custom: '日历筛选' };
     const i18n = {
@@ -893,8 +894,8 @@
         state.loadedStart = start;
       }
       if (end > state.loadedEnd) {
-        const overlapStart = Math.max(start, state.loadedEnd - 1);
-        await fetchEvents(overlapStart, end, state.loadedEnd - 1);
+        const overlapStart = Math.max(start, state.loadedEnd - BACKFILL_OVERLAP_SECONDS);
+        await fetchEvents(overlapStart, end);
         state.loadedEnd = end;
       }
     }

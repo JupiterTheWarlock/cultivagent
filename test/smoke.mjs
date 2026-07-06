@@ -347,6 +347,7 @@ try {
   assert.match(dashboard, /使用统计/);
   assert.match(dashboard, /请求统计/);
   assert.match(dashboard, /composedPath/);
+  assert.match(dashboard, /BACKFILL_OVERLAP_SECONDS/);
   const workerSource = readFileSync(new URL("../worker/index.mjs", import.meta.url), "utf8");
   assert.match(workerSource, /cache-control", "no-store"/);
 
