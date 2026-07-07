@@ -7,7 +7,7 @@ Cultivagent is a small self-hosted, **pure passive** monitor for coding-agent ho
 - Daily usage rollups.
 - Dashboard at `http://127.0.0.1:3737`.
 - Auth (token + login-page cookie) for remote / HTTPS deployment.
-- Plugins for Claude Code, Codex, OpenCode, Pi, OpenClaw — install via one-line installer or local marketplace.
+- Plugins for Claude Code, Codex, OpenCode, Pi, OpenClaw, Locus — install via one-line installer, local marketplace, or read-only collector.
 
 No prompt text, command text, file contents, or tool output is stored by default. **No MCP, no agent-callable interface** — agents only `POST` hook events to `/ingest`.
 
@@ -45,6 +45,7 @@ One-line installers per agent — write `~/.cultivagent/config.json`, clone the 
 | OpenCode | `bash <(curl -fsSL https://raw.githubusercontent.com/JupiterTheWarlock/cultivagent/main/plugins/opencode/install.sh)` |
 | Pi | `bash <(curl -fsSL https://raw.githubusercontent.com/JupiterTheWarlock/cultivagent/main/plugins/pi/install.sh)` |
 | OpenClaw | native plugin entry — [plugins/openclaw/README.md](plugins/openclaw/README.md) |
+| Locus | read-only session collector — [plugins/locus/README.md](plugins/locus/README.md) |
 
 ## Auth
 
@@ -103,6 +104,7 @@ Implemented:
 - Codex plugin (copy + render-on-install, `config.toml` wiring, install.sh; no wrapper needed).
 - OpenCode / Pi plugins (adapter + install.sh).
 - OpenClaw native plugin entry (stub-grade).
+- Locus read-only session collector.
 - CLI smoke events for Codex, Claude Code, OpenCode.
 
 Usage-source notes:
@@ -111,3 +113,4 @@ Usage-source notes:
 - Codex: the Stop hook runs a local session collector to report session JSONL usage; native OTel export is optional.
 - OpenCode: plugin events are live; `plugins/opencode/session-collector.mjs` can backfill `opencode.db` assistant-message usage when present.
 - OpenClaw: native plugin usage is counted from plugin payload usage fields, including nested `usageState` / `agentMeta` usage.
+- Locus: `plugins/locus/session-collector.mjs` reads completed `usageUpdate` rows from Locus' local `locus.db` and reports them as `source_agent: "locus"`.

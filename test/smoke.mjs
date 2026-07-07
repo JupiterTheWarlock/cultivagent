@@ -8,6 +8,7 @@ import { normalizeEvent, normalizeOtelLogs, translateLoopEvent } from "../src/no
 import { collectSessionEventsFromFile } from "../plugins/codex/scripts/session-collector.mjs";
 import { collectClaudeSessionEvents } from "../plugins/claude-code/scripts/session-collector.mjs";
 import { collectOpenCodeEvents, parseMessageData as parseOpenCodeMessageData } from "../plugins/opencode/session-collector.mjs";
+import { collectLocusEvents } from "../plugins/locus/session-collector.mjs";
 import { baseEvent as claudeBaseEvent } from "../plugins/claude-code/scripts/lib.mjs";
 
 const dir = mkdtempSync(join(tmpdir(), "cultivagent-"));
@@ -184,6 +185,7 @@ try {
   assert.equal(translateLoopEvent("claude-code", "PreToolUse").loop_event, "tool.before");
   assert.equal(translateLoopEvent("pi", "before_provider_request").agent_status, "thinking");
   assert.equal(translateLoopEvent("openclaw", "subagent_spawned").agent_status, "delegating");
+  assert.equal(normalizeEvent({ source_agent: "locus" }).source_agent, "locus");
   const openClawUsage = normalizeEvent({
     source_agent: "openclaw",
     event_type: "llm_output",
@@ -301,6 +303,49 @@ try {
   const opencodeEvents = collectOpenCodeEvents(opencodeDb, { machineName: "HOST", username: "desk" });
   assert.equal(opencodeEvents.length, 1);
   assert.equal(opencodeEvents[0].usage.total_tokens, 24);
+
+  const locusDb = join(dir, "locus.db");
+  const ldb = new DatabaseSync(locusDb);
+  ldb.exec(`
+    CREATE TABLE sessions (id TEXT PRIMARY KEY, workspace_id TEXT, agent_id TEXT);
+    CREATE TABLE session_runs (run_id TEXT PRIMARY KEY, session_id TEXT, status TEXT, started_at INTEGER, updated_at INTEGER, finished_at INTEGER);
+    CREATE TABLE messages (id TEXT, session_id TEXT, role TEXT, content TEXT, created_at INTEGER, metadata_json TEXT);
+    CREATE TABLE session_events (session_id TEXT, run_id TEXT, seq INTEGER, event_type TEXT, payload_json TEXT, created_at INTEGER, PRIMARY KEY (session_id, seq));
+  `);
+  ldb.prepare("INSERT INTO sessions VALUES (?, ?, ?)").run("locus-s1", "unity-test", "dev");
+  ldb.prepare("INSERT INTO session_runs VALUES (?, ?, ?, ?, ?, ?)").run("locus-r1", "locus-s1", "done", 1782864400, 1782864405, 1782864410);
+  ldb.prepare("INSERT INTO session_runs VALUES (?, ?, ?, ?, ?, ?)").run("locus-r2", "locus-s1", "running", 1782864500, 1782864505, null);
+  ldb.prepare("INSERT INTO messages VALUES (?, ?, ?, ?, ?, ?)").run("m1", "locus-s1", "assistant", "", 1782864408, JSON.stringify({
+    responseRequest: { model: "gpt-5.5" },
+  }));
+  ldb.prepare("INSERT INTO session_events VALUES (?, ?, ?, ?, ?, ?)").run("locus-s1", "locus-r1", 1, "usageUpdate", JSON.stringify({
+    type: "usageUpdate",
+    sessionId: "locus-s1",
+    inputTokens: 2,
+    outputTokens: 3,
+    cacheReadTokens: 4,
+    cacheWriteTokens: 5,
+    totalInputTokens: 20,
+    totalOutputTokens: 30,
+    totalCacheReadTokens: 40,
+    totalCacheWriteTokens: 50,
+    contextTokens: 123,
+    contextLimit: 456,
+  }), 1782864409);
+  ldb.prepare("INSERT INTO session_events VALUES (?, ?, ?, ?, ?, ?)").run("locus-s1", "locus-r2", 2, "usageUpdate", JSON.stringify({
+    type: "usageUpdate",
+    sessionId: "locus-s1",
+    inputTokens: 99,
+  }), 1782864509);
+  ldb.close();
+  const locusEvents = collectLocusEvents(locusDb, { machineName: "HOST", username: "desk", lookbackMinutes: 0 });
+  assert.equal(locusEvents.length, 1);
+  assert.equal(locusEvents[0].source_agent, "locus");
+  assert.equal(locusEvents[0].model, "gpt-5.5");
+  assert.equal(locusEvents[0].provider, "locus");
+  assert.equal(locusEvents[0].usage.total_tokens, 14);
+  assert.equal(locusEvents[0].meta.context_tokens, 123);
+  assert.equal(collectLocusEvents(locusDb, { includeIncomplete: true, lookbackMinutes: 0 }).length, 2);
 
   // plugin hooks.json 合法性（取代已移除的 generate-hook-config 测试）
   const claudeHooks = JSON.parse(readFileSync(new URL("../plugins/claude-code/hooks/hooks.json", import.meta.url), "utf8"));

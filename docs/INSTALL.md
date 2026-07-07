@@ -142,6 +142,30 @@ Adds a `pi()` shell wrapper (or use `pi -e <file>` / package.json `pi.extensions
 
 Native plugin entry (TypeScript, build required). See [plugins/openclaw/README.md](../plugins/openclaw/README.md).
 
+### Locus
+
+Locus integration is a read-only collector. It does not modify Locus or install
+hooks into Locus; it reads the local `locus.db` and sends completed
+`usageUpdate` rows as `source_agent: "locus"`.
+
+```bash
+node plugins/locus/session-collector.mjs --dry-run --json
+node plugins/locus/session-collector.mjs --json
+```
+
+The collector uses the same `~/.cultivagent/config.json` and env priority as
+the other plugins. Auto-discovery checks common Locus data locations; override
+it when needed:
+
+```bash
+LOCUS_DB="D:/Apps/Locus/data/locus.db" node plugins/locus/session-collector.mjs --json
+```
+
+For a Locus View launcher, point the runner at this script and let the View only
+start/stop the runner and display its log. Closing the View should not stop the
+runner; only the runner's explicit Stop action should kill the process. See
+[plugins/locus/README.md](../plugins/locus/README.md).
+
 ## 3. Config priority
 
 All plugins resolve endpoint/token as: env (`CULTIVAGENT_ENDPOINT` / `CULTIVAGENT_TOKEN`) > `~/.cultivagent/config.json` > `http://127.0.0.1:3737` (no token).

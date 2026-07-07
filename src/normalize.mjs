@@ -6,6 +6,7 @@ const KNOWN_AGENTS = new Set([
   "claude-code",
   "opencode",
   "openclaw",
+  "locus",
   "pi",
   "cultivagent",
 ]);
