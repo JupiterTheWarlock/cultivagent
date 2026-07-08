@@ -115,6 +115,7 @@ function shouldReplace(existing, next) {
 
 async function main() {
   const args = parseArgs(process.argv.slice(2));
+  if (args.delayMs) await sleep(args.delayMs);
   const root = args.root ?? join(homedir(), ".claude", "projects");
   const statePath = args.state ?? DEFAULT_STATE_PATH;
   const state = loadState(statePath);
@@ -153,14 +154,19 @@ function parseArgs(argv) {
     else if (arg === "--state") args.state = argv[++i];
     else if (arg === "--lookback-minutes") args.lookbackMinutes = Number(argv[++i]);
     else if (arg === "--batch-size") args.batchSize = Number(argv[++i]);
+    else if (arg === "--delay-ms") args.delayMs = Number(argv[++i]);
     else if (arg === "--dry-run") args.dryRun = true;
     else if (arg === "--json") args.json = true;
     else if (arg === "-h" || arg === "--help") {
-      console.log("Usage: session-collector.mjs [--root DIR] [--state FILE] [--lookback-minutes N] [--batch-size N] [--dry-run] [--json]");
+      console.log("Usage: session-collector.mjs [--root DIR] [--state FILE] [--lookback-minutes N] [--batch-size N] [--delay-ms N] [--dry-run] [--json]");
       process.exit(0);
     }
   }
   return args;
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, Math.max(0, Number(ms) || 0)));
 }
 
 function projectFromPath(file) {
