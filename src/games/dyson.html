@@ -257,7 +257,7 @@
     <div id="agentRows"></div>
   </section>
   <section class="debug" aria-label="Dyson debug tools">
-    <div class="debug-head"><span>DEBUG</span><span id="statusLine">connecting</span></div>
+    <div class="debug-head"><span>DEBUG · 仅视觉</span><span id="statusLine">connecting</span></div>
     <div class="debug-grid">
       <select id="debugAgent" aria-label="Debug agent"></select>
       <input id="debugTokens" aria-label="Debug tokens" type="number" min="100" step="100" value="10000">
@@ -270,12 +270,11 @@
         <option value="error">error</option>
       </select>
       <button type="button" id="debugStatusBtn">状态机</button>
-      <button type="button" id="debugUsageBtn">请求 1w</button>
       <button type="button" id="debugBeamBtn">发射云</button>
       <button type="button" id="debugStructureBtn">凝结结构</button>
       <button type="button" id="debugRefreshBtn">刷新</button>
     </div>
-    <div class="debug-log" id="debugLog">ready</div>
+    <div class="debug-log" id="debugLog">visual only · 不写入数据</div>
   </section>
   <div class="tooltip" id="tooltip"></div>
 
@@ -312,7 +311,6 @@
       debugTokens: document.getElementById("debugTokens"),
       debugStatus: document.getElementById("debugStatus"),
       debugStatusBtn: document.getElementById("debugStatusBtn"),
-      debugUsageBtn: document.getElementById("debugUsageBtn"),
       debugBeamBtn: document.getElementById("debugBeamBtn"),
       debugStructureBtn: document.getElementById("debugStructureBtn"),
       debugRefreshBtn: document.getElementById("debugRefreshBtn"),
@@ -328,6 +326,7 @@
       targetFreeClouds: 0,
       visualClouds: 0,
       structureBlocks: 0,
+      visualStructureBlocks: 0,
       freeClouds: 0,
       cloudsHydrated: false,
       agents: [],
@@ -420,7 +419,6 @@
     window.addEventListener("wheel", onWheel, { passive: false });
     window.addEventListener("contextmenu", (event) => event.preventDefault());
     window.addEventListener("dblclick", resetCamera);
-    els.debugUsageBtn.addEventListener("click", () => postDebugUsage(debugTokens(), "debug usage"));
     els.debugStructureBtn.addEventListener("click", postDebugStructure);
     els.debugStatusBtn.addEventListener("click", postDebugStatus);
     els.debugBeamBtn.addEventListener("click", fireDebugBeam);
@@ -450,14 +448,15 @@
 
     function updateDysonShell(t) {
       // ponytail: one soccer shell has 32 panels; add layered shells if overflow needs visible depth.
-      const visible = Math.min(structures.panelCount, state.structureBlocks);
+      const structureTotal = state.structureBlocks + (state.visualStructureBlocks || 0);
+      const visible = Math.min(structures.panelCount, structureTotal);
       setSoccerShellVisible(structures, visible);
       structureGroup.visible = visible > 0;
       structureGroup.rotation.y = t * 0.018;
       structureGroup.rotation.x = Math.sin(t * 0.05) * 0.05;
-      const density = Math.min(1, state.structureBlocks / 80);
-      structures.panels.material.opacity = state.structureBlocks ? 0.74 + density * 0.16 : 0;
-      structures.outlines.material.opacity = state.structureBlocks ? 0.55 + density * 0.18 : 0;
+      const density = Math.min(1, structureTotal / 80);
+      structures.panels.material.opacity = structureTotal ? 0.74 + density * 0.16 : 0;
+      structures.outlines.material.opacity = structureTotal ? 0.55 + density * 0.18 : 0;
     }
 
     function updatePlanets(t, dt) {
@@ -977,7 +976,7 @@
     function renderHud() {
       els.tokenValue.textContent = short.format(state.targetTokens);
       els.cloudValue.textContent = short.format(state.targetClouds);
-      els.shellValue.textContent = short.format(state.structureBlocks);
+      els.shellValue.textContent = short.format(state.structureBlocks + (state.visualStructureBlocks || 0));
       els.freeValue.textContent = short.format(state.freeClouds);
       els.clockLine.textContent = `1 cloud = ${TOKEN_PER_CLOUD} tokens / 1 block = 1000万 tokens`;
     }
@@ -1038,34 +1037,27 @@
       syncPlanets(state.agents, new Map(state.agentCloudTargets));
     }
 
-    async function postDebugUsage(tokens, label) {
+    // 测试面板仅做视觉表现：不调用 /ingest，不写入线上数据
+    function postDebugStructure() {
       const agent = debugAgent();
-      const clouds = Math.floor(tokens / TOKEN_PER_CLOUD);
-      const queued = enqueueClouds(agent, clouds);
-      await postDebugEvents([debugEvent(agent, {
-        event_type: "model_response",
-        usage: { input_tokens: Math.floor(tokens * 0.65), output_tokens: Math.ceil(tokens * 0.35) },
-        agent_status: "done",
-      })], `${label}: ${nf.format(tokens)} tokens / queued ${nf.format(queued)} clouds @ ${CLOUD_EMIT_RATE}/s`);
+      ensureVisualAgent(agent);
+      state.visualStructureBlocks = (state.visualStructureBlocks || 0) + 1;
+      els.debugLog.textContent = `visual structure: ${agent} +1 block`;
     }
 
-    async function postDebugStructure() {
-      const agent = debugAgent();
-      await postDebugEvents([debugEvent(agent, {
-        event_type: "model_response",
-        usage: { input_tokens: STRUCTURE_TOKEN_COST, output_tokens: 0 },
-        agent_status: "done",
-      })], `structure: ${agent} +1 block`);
-    }
-
-    async function postDebugStatus() {
+    function postDebugStatus() {
       const agent = debugAgent();
       const agentStatus = els.debugStatus.value;
-      await postDebugEvents([debugEvent(agent, {
-        event_type: statusEventType(agentStatus),
-        agent_status: agentStatus,
-        status: agentStatus === "error" ? "error" : "ok",
-      })], `status: ${agent} -> ${agentStatus}`);
+      ensureVisualAgent(agent);
+      const planet = planets.get(agent);
+      if (planet) {
+        planet.status = agentStatus;
+        planet.row = planet.row || state.debugAgents.get(agent) || {};
+        planet.row.summary = planet.row.summary || {};
+        planet.row.summary.meta = planet.row.summary.meta || {};
+        planet.row.summary.meta.agent_status = agentStatus;
+      }
+      els.debugLog.textContent = `visual status: ${agent} -> ${agentStatus}`;
     }
 
     function fireDebugBeam() {
@@ -1073,62 +1065,6 @@
       const clouds = Math.max(1, Math.floor(debugTokens() / TOKEN_PER_CLOUD));
       const queued = enqueueClouds(agent, clouds);
       els.debugLog.textContent = `visual beam: ${agent} +${nf.format(queued)} clouds @ ${CLOUD_EMIT_RATE}/s`;
-    }
-
-    async function postDebugEvents(events, label) {
-      els.debugLog.textContent = "posting " + label;
-      const res = await fetch("/ingest", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ events }),
-      });
-      if (!res.ok) {
-        els.debugLog.textContent = `debug failed: ${res.status}`;
-        return;
-      }
-      const data = await res.json();
-      els.debugLog.textContent = `${label} / inserted ${data.inserted}`;
-      await refreshData();
-    }
-
-    function debugEvent(agent, extra) {
-      const now = new Date();
-      return {
-        event_id: `dyson-debug-${agent}-${now.getTime()}-${Math.random().toString(16).slice(2)}`,
-        source_agent: agent,
-        source_surface: "dyson-debug",
-        occurred_at: now.toISOString(),
-        username: `debug-${agent}`,
-        host_id: `debug-host-${agent}`,
-        workspace_id: "dyson-debug",
-        session_id: `dyson-debug-${agent}`,
-        agent_id: `${agent}-debug`,
-        model: debugModel(agent),
-        provider: agent,
-        ...extra,
-      };
-    }
-
-    function debugModel(agent) {
-      return ({
-        codex: "gpt-5-codex",
-        "claude-code": "claude-sonnet",
-        opencode: "deepseek-v4-pro",
-        openclaw: "openclaw-agent",
-        locus: "gpt-5-locus",
-        pi: "pi-agent",
-      })[agent] || "debug-model";
-    }
-
-    function statusEventType(status) {
-      return ({
-        thinking: "before_provider_request",
-        streaming: "message_update",
-        tool_calling: "PreToolUse",
-        waiting_approval: "PermissionRequest",
-        done: "Stop",
-        error: "StopFailure",
-      })[status] || "hook_event";
     }
 
     function buildCloudGeometry(count) {
