@@ -402,7 +402,7 @@ try {
   assert.match(dyson, /debugStructureBtn/);
   const workerSource = readFileSync(new URL("../worker/index.mjs", import.meta.url), "utf8");
   assert.match(workerSource, /cache-control", "no-store"/);
-  assert.match(workerSource, /dyson\.html/);
+  assert.match(workerSource, /assetRequest\(request, "\/dyson"\)/);
 
   const events = await get(`${base}/api/events?limit=20`);
   const otelEvent = events.events.find((x) => x.source_surface === "otel" && x.source_agent === "claude-code");
