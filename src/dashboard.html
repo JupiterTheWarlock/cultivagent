@@ -53,6 +53,21 @@
       font-size: 12px;
       font-weight: 600;
     }
+    .dyson-link {
+      height: 34px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: var(--card-solid);
+      color: var(--muted-foreground);
+      padding: 0 10px;
+      font-size: 12px;
+      font-weight: 700;
+      text-decoration: none;
+    }
+    .dyson-link:hover { color: var(--foreground); border-color: var(--border-strong); }
     .mode-tabs, .tabs-list {
       display: inline-flex;
       align-items: center;
@@ -483,6 +498,7 @@
         <div class="brand-subtitle">Agent hook and token usage monitor</div>
       </div>
       <div class="top-actions">
+        <a class="dyson-link" href="/dyson">Dyson</a>
         <select id="lang" aria-label="Language">
           <option value="zh">中文</option>
           <option value="en">English</option>

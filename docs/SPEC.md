@@ -49,6 +49,10 @@ Only count completed model requests or official aggregate usage metrics.
 
 Do not count every lifecycle hook.
 
+## Game UI
+
+The Dyson game UI requirements live in [DYSON_GAME_UI.md](./DYSON_GAME_UI.md).
+
 ## Fixture Gate
 
 Adapters may ship before token usage is complete. Token accounting for each agent becomes authoritative only after redacted raw fixtures prove the payload fields.

@@ -37,6 +37,9 @@ export function createCultivagentServer(options = {}) {
       if (req.method === "GET" && (url.pathname === "/" || url.pathname === "/index.html")) {
         return html(res, isAuthorized(req, token) ? dashboardHtml() : loginPageHtml());
       }
+      if (req.method === "GET" && (url.pathname === "/dyson" || url.pathname === "/dyson.html")) {
+        return html(res, isAuthorized(req, token) ? dysonHtml() : loginPageHtml());
+      }
 
       // 其余所有路径：token 非空时强制 auth（含 GET，堵住 /api/* 裸奔）
       if (!isAuthorized(req, token)) {
@@ -204,4 +207,8 @@ function html(res, body) {
 
 function dashboardHtml() {
   return readFileSync(new URL("./dashboard.html", import.meta.url), "utf8");
+}
+
+function dysonHtml() {
+  return readFileSync(new URL("./games/dyson.html", import.meta.url), "utf8");
 }

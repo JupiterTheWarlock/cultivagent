@@ -1,0 +1,1411 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Cultivagent Dyson</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #06080d;
+      --fg: #eef6ff;
+      --muted: #91a4b8;
+      --line: rgba(145, 164, 184, 0.28);
+      --panel: rgba(8, 13, 20, 0.76);
+      --green: #44d19d;
+      --cyan: #61dafb;
+      --amber: #ffb84d;
+      --red: #ff5c78;
+      font-family: Inter, ui-sans-serif, system-ui, "Segoe UI", Arial, sans-serif;
+      background: var(--bg);
+      color: var(--fg);
+    }
+
+    * { box-sizing: border-box; }
+    html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; background: var(--bg); }
+    body { min-width: 320px; }
+    button, a { font: inherit; letter-spacing: 0; }
+    a { color: inherit; text-decoration: none; }
+    #scene { position: fixed; inset: 0; }
+    #scene canvas { display: block; width: 100%; height: 100%; }
+    .hud {
+      position: fixed;
+      inset: 18px 18px auto 18px;
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 14px;
+      pointer-events: none;
+    }
+    .brand, .metrics, .agents, .tooltip {
+      border: 1px solid var(--line);
+      background: var(--panel);
+      backdrop-filter: blur(12px);
+      box-shadow: 0 18px 48px rgba(0, 0, 0, 0.28);
+    }
+    .brand {
+      min-width: 210px;
+      border-radius: 8px;
+      padding: 12px 14px;
+      pointer-events: auto;
+    }
+    .brand-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+    h1 { margin: 0; font-size: 14px; line-height: 1.2; letter-spacing: 0; }
+    .back {
+      height: 28px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      padding: 0 9px;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 700;
+    }
+    .back:hover { color: var(--fg); border-color: rgba(238, 246, 255, 0.42); }
+    .sub { margin-top: 8px; color: var(--muted); font: 12px/1.4 ui-monospace, SFMono-Regular, Consolas, monospace; }
+    .metrics {
+      width: min(560px, calc(100vw - 280px));
+      border-radius: 8px;
+      padding: 12px;
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 8px;
+      pointer-events: auto;
+    }
+    .metric {
+      min-width: 0;
+      border-radius: 7px;
+      border: 1px solid rgba(145, 164, 184, 0.16);
+      padding: 9px;
+      background: rgba(255, 255, 255, 0.035);
+    }
+    .label {
+      color: var(--muted);
+      font-size: 11px;
+      line-height: 1.2;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .value {
+      margin-top: 4px;
+      font: 700 18px/1.1 ui-monospace, SFMono-Regular, Consolas, monospace;
+      letter-spacing: 0;
+    }
+    .agents {
+      position: fixed;
+      right: 18px;
+      bottom: 18px;
+      width: min(360px, calc(100vw - 36px));
+      max-height: min(44vh, 420px);
+      overflow: auto;
+      border-radius: 8px;
+      padding: 10px;
+      pointer-events: auto;
+    }
+    .debug {
+      position: fixed;
+      left: 18px;
+      bottom: 18px;
+      width: min(380px, calc(100vw - 36px));
+      border: 1px solid var(--line);
+      background: var(--panel);
+      backdrop-filter: blur(12px);
+      border-radius: 8px;
+      padding: 10px;
+      pointer-events: auto;
+      box-shadow: 0 18px 48px rgba(0, 0, 0, 0.28);
+    }
+    .debug-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      color: var(--muted);
+      font-size: 11px;
+      margin-bottom: 8px;
+    }
+    .debug-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    .debug select, .debug input, .debug button {
+      width: 100%;
+      min-width: 0;
+      height: 30px;
+      border: 1px solid rgba(145, 164, 184, 0.22);
+      border-radius: 7px;
+      background: rgba(255, 255, 255, 0.04);
+      color: var(--fg);
+      padding: 0 8px;
+      font-size: 12px;
+      font-weight: 700;
+    }
+    .debug button { cursor: pointer; }
+    .debug button:hover { border-color: rgba(238, 246, 255, 0.42); background: rgba(255, 255, 255, 0.08); }
+    .debug-log {
+      min-height: 16px;
+      margin-top: 8px;
+      color: var(--muted);
+      font: 11px/1.35 ui-monospace, SFMono-Regular, Consolas, monospace;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .agents-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      color: var(--muted);
+      font-size: 11px;
+      padding: 0 2px 8px;
+    }
+    .agent-row {
+      display: grid;
+      grid-template-columns: 10px minmax(0, 1fr) auto;
+      gap: 9px;
+      align-items: center;
+      min-height: 34px;
+      border-top: 1px solid rgba(145, 164, 184, 0.12);
+      padding: 8px 2px;
+    }
+    .dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 999px;
+      background: var(--muted);
+      box-shadow: 0 0 14px currentColor;
+    }
+    .agent-name {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-size: 12px;
+      font-weight: 700;
+    }
+    .agent-meta {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      color: var(--muted);
+      font: 11px/1.35 ui-monospace, SFMono-Regular, Consolas, monospace;
+    }
+    .agent-status {
+      color: var(--muted);
+      font: 11px/1 ui-monospace, SFMono-Regular, Consolas, monospace;
+    }
+    .tooltip {
+      position: fixed;
+      z-index: 3;
+      display: none;
+      max-width: min(420px, calc(100vw - 28px));
+      border-radius: 8px;
+      padding: 10px 12px;
+      pointer-events: none;
+      font-size: 12px;
+      line-height: 1.45;
+    }
+    .tooltip strong { display: block; margin-bottom: 5px; font-size: 12px; }
+    .tooltip .mono { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; color: var(--muted); }
+    .status {
+      position: fixed;
+      left: 18px;
+      bottom: 18px;
+      max-width: min(520px, calc(100vw - 36px));
+      color: var(--muted);
+      font: 12px/1.45 ui-monospace, SFMono-Regular, Consolas, monospace;
+      pointer-events: none;
+    }
+
+    @media (max-width: 820px) {
+      .hud { inset: 12px 12px auto 12px; flex-direction: column; }
+      .brand { width: 100%; }
+      .metrics { width: 100%; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .agents { left: 12px; right: 12px; bottom: 12px; width: auto; max-height: 34vh; }
+      .debug { left: 12px; right: 12px; bottom: calc(34vh + 24px); width: auto; }
+      .status { left: 12px; bottom: calc(34vh + 24px); max-width: calc(100vw - 24px); }
+    }
+  </style>
+  <script type="importmap">
+    { "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.185.1/build/three.module.js" } }
+  </script>
+</head>
+<body>
+  <div id="scene" aria-label="Cultivagent Dyson system"></div>
+  <div class="hud">
+    <section class="brand" aria-label="Dyson view">
+      <div class="brand-row">
+        <h1>Cultivagent Dyson</h1>
+        <a class="back" href="/">Dashboard</a>
+      </div>
+      <div class="sub" id="clockLine">booting renderer</div>
+    </section>
+    <section class="metrics" aria-label="Dyson metrics">
+      <div class="metric"><div class="label">今日 Tokens</div><div class="value" id="tokenValue">0</div></div>
+      <div class="metric"><div class="label">戴森云</div><div class="value" id="cloudValue">0</div></div>
+      <div class="metric"><div class="label">结构块</div><div class="value" id="shellValue">0</div></div>
+      <div class="metric"><div class="label">游离云</div><div class="value" id="freeValue">0</div></div>
+    </section>
+  </div>
+  <section class="agents" aria-label="Agent planets">
+    <div class="agents-head"><span>AGENTS</span><span id="agentCount">0</span></div>
+    <div id="agentRows"></div>
+  </section>
+  <section class="debug" aria-label="Dyson debug tools">
+    <div class="debug-head"><span>DEBUG</span><span id="statusLine">connecting</span></div>
+    <div class="debug-grid">
+      <select id="debugAgent" aria-label="Debug agent"></select>
+      <input id="debugTokens" aria-label="Debug tokens" type="number" min="100" step="100" value="10000">
+      <select id="debugStatus" aria-label="Debug status">
+        <option value="thinking">thinking</option>
+        <option value="streaming">streaming</option>
+        <option value="tool_calling">tool_calling</option>
+        <option value="waiting_approval">waiting_approval</option>
+        <option value="done">done</option>
+        <option value="error">error</option>
+      </select>
+      <button type="button" id="debugStatusBtn">状态机</button>
+      <button type="button" id="debugUsageBtn">请求 1w</button>
+      <button type="button" id="debugBeamBtn">发射云</button>
+      <button type="button" id="debugStructureBtn">凝结结构</button>
+      <button type="button" id="debugRefreshBtn">刷新</button>
+    </div>
+    <div class="debug-log" id="debugLog">ready</div>
+  </section>
+  <div class="tooltip" id="tooltip"></div>
+
+  <script type="module">
+    import * as THREE from "three";
+
+    const TOKEN_PER_CLOUD = 100;
+    const STRUCTURE_TOKEN_COST = 10_000_000;
+    const STRUCTURE_CLOUD_COST = STRUCTURE_TOKEN_COST / TOKEN_PER_CLOUD;
+    const FREE_CLOUD_MAX = STRUCTURE_CLOUD_COST;
+    const MAX_PLANETS = 32;
+    const FETCH_INTERVAL_MS = 5000;
+    const CLOUD_RADIUS_MIN = 23;
+    const CLOUD_RADIUS_MAX = 54;
+    const CLOUD_ENTRY_RADIUS = CLOUD_RADIUS_MAX + 3;
+    const HORIZONTAL_TANGENT_COS = Math.cos(Math.PI / 6);
+    const CLOUD_ORBIT_SPEED = 0.025;
+    const CLOUD_EMIT_RATE = 10;
+    const SHOT_DURATION = 8.4;
+    const MAX_ACTIVE_SHOTS = 96;
+    const INJECTION_DURATION = 1.2;
+
+    const els = {
+      scene: document.getElementById("scene"),
+      tokenValue: document.getElementById("tokenValue"),
+      cloudValue: document.getElementById("cloudValue"),
+      shellValue: document.getElementById("shellValue"),
+      freeValue: document.getElementById("freeValue"),
+      clockLine: document.getElementById("clockLine"),
+      agentCount: document.getElementById("agentCount"),
+      agentRows: document.getElementById("agentRows"),
+      statusLine: document.getElementById("statusLine"),
+      debugAgent: document.getElementById("debugAgent"),
+      debugTokens: document.getElementById("debugTokens"),
+      debugStatus: document.getElementById("debugStatus"),
+      debugStatusBtn: document.getElementById("debugStatusBtn"),
+      debugUsageBtn: document.getElementById("debugUsageBtn"),
+      debugBeamBtn: document.getElementById("debugBeamBtn"),
+      debugStructureBtn: document.getElementById("debugStructureBtn"),
+      debugRefreshBtn: document.getElementById("debugRefreshBtn"),
+      debugLog: document.getElementById("debugLog"),
+      tooltip: document.getElementById("tooltip"),
+    };
+
+    const nf = new Intl.NumberFormat("zh-CN");
+    const short = new Intl.NumberFormat("zh-CN", { notation: "compact", maximumFractionDigits: 1 });
+    const state = {
+      targetTokens: 0,
+      targetClouds: 0,
+      targetFreeClouds: 0,
+      visualClouds: 0,
+      structureBlocks: 0,
+      freeClouds: 0,
+      cloudsHydrated: false,
+      agents: [],
+      agentCloudTargets: new Map(),
+      pendingByAgent: new Map(),
+      debugAgents: new Map(),
+      mouse: new THREE.Vector2(10, 10),
+      pointer: { x: 0, y: 0 },
+      hover: null,
+      dragging: false,
+      dragMode: "",
+      cameraYaw: 0,
+      cameraPitch: 0.38,
+      cameraDistance: 150,
+      cameraTarget: new THREE.Vector3(0, 0, 0),
+      lastPointer: { x: 0, y: 0 },
+    };
+
+    const renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: "high-performance" });
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.5));
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.outputColorSpace = THREE.SRGBColorSpace;
+    els.scene.appendChild(renderer.domElement);
+
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x06080d);
+    scene.fog = new THREE.FogExp2(0x06080d, 0.006);
+
+    const camera = new THREE.PerspectiveCamera(48, window.innerWidth / window.innerHeight, 0.1, 900);
+    const raycaster = new THREE.Raycaster();
+    const clock = new THREE.Clock();
+
+    const root = new THREE.Group();
+    scene.add(root);
+    scene.add(new THREE.AmbientLight(0x9ab4ff, 0.34));
+    const starLight = new THREE.PointLight(0xffcc77, 1200, 360, 1.7);
+    scene.add(starLight);
+
+    const star = new THREE.Mesh(
+      new THREE.SphereGeometry(13, 64, 32),
+      new THREE.MeshBasicMaterial({ color: 0xffb347 })
+    );
+    star.userData.kind = "star";
+    scene.add(star);
+
+    const corona = new THREE.Mesh(
+      new THREE.SphereGeometry(15.5, 48, 24),
+      new THREE.MeshBasicMaterial({ color: 0xffd18a, transparent: true, opacity: 0.1, depthWrite: false })
+    );
+    scene.add(corona);
+
+    const cloudGroup = new THREE.Group();
+    root.add(cloudGroup);
+    const cloudGeometry = buildCloudGeometry(FREE_CLOUD_MAX);
+    const cloudSeedPositions = cloudGeometry.attributes.position.array.slice();
+    const cloudMaterial = new THREE.PointsMaterial({
+      color: 0x79e8ff,
+      size: 0.24,
+      sizeAttenuation: true,
+      transparent: true,
+      opacity: 0.68,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+    });
+    const clouds = new THREE.Points(cloudGeometry, cloudMaterial);
+    clouds.frustumCulled = false;
+    clouds.geometry.setDrawRange(0, 0);
+    cloudGroup.add(clouds);
+
+    const structureGroup = new THREE.Group();
+    scene.add(structureGroup);
+    const structures = buildSoccerShell(32);
+    structureGroup.add(structures.panels, structures.outlines);
+
+    const planets = new Map();
+    const planetMeshes = [];
+    const trailGeometry = new THREE.CylinderGeometry(0.08, 0.02, 1, 8);
+    const projectileGeometry = new THREE.SphereGeometry(0.22, 12, 8);
+    const injectedCloudGeometry = new THREE.SphereGeometry(0.18, 8, 6);
+    const muzzleGeometry = new THREE.CylinderGeometry(0.8, 1.05, 2.4, 12);
+    const ringGeometry = new THREE.TorusGeometry(1, 0.04, 8, 48);
+    const injectedClouds = [];
+
+    renderer.setAnimationLoop(animate);
+    window.addEventListener("resize", onResize);
+    window.addEventListener("pointermove", onPointerMove);
+    window.addEventListener("pointerdown", onPointerDown);
+    window.addEventListener("pointerup", onPointerUp);
+    window.addEventListener("pointercancel", onPointerUp);
+    window.addEventListener("wheel", onWheel, { passive: false });
+    window.addEventListener("contextmenu", (event) => event.preventDefault());
+    window.addEventListener("dblclick", resetCamera);
+    els.debugUsageBtn.addEventListener("click", () => postDebugUsage(debugTokens(), "debug usage"));
+    els.debugStructureBtn.addEventListener("click", postDebugStructure);
+    els.debugStatusBtn.addEventListener("click", postDebugStatus);
+    els.debugBeamBtn.addEventListener("click", fireDebugBeam);
+    els.debugRefreshBtn.addEventListener("click", refreshData);
+    refreshData();
+    setInterval(refreshData, FETCH_INTERVAL_MS);
+
+    function animate() {
+      const dt = Math.min(clock.getDelta(), 0.05);
+      const t = clock.elapsedTime;
+      advanceCloudCount(dt);
+      updateDysonShell(t);
+      updatePlanets(t, dt);
+      updateInjectedClouds(dt);
+      updateCamera(t);
+      updateHover();
+      renderHud();
+      renderer.render(scene, camera);
+    }
+
+    function advanceCloudCount(dt) {
+      state.freeClouds = Math.floor(Math.max(0, Math.min(FREE_CLOUD_MAX, state.visualClouds)));
+      clouds.geometry.setDrawRange(0, state.freeClouds);
+      cloudGroup.rotation.y = tamedRotation(CLOUD_ORBIT_SPEED);
+      cloudGroup.rotation.z = 0;
+    }
+
+    function updateDysonShell(t) {
+      // ponytail: one soccer shell has 32 panels; add layered shells if overflow needs visible depth.
+      const visible = Math.min(structures.panelCount, state.structureBlocks);
+      setSoccerShellVisible(structures, visible);
+      structureGroup.visible = visible > 0;
+      structureGroup.rotation.y = t * 0.018;
+      structureGroup.rotation.x = Math.sin(t * 0.05) * 0.05;
+      const density = Math.min(1, state.structureBlocks / 80);
+      structures.panels.material.opacity = state.structureBlocks ? 0.74 + density * 0.16 : 0;
+      structures.outlines.material.opacity = state.structureBlocks ? 0.55 + density * 0.18 : 0;
+    }
+
+    function updatePlanets(t, dt) {
+      for (const planet of planets.values()) {
+        planet.pivot.rotation.y = planet.baseAngle + t * planet.speed;
+        planet.mesh.rotation.y = t * 0.6;
+        planet.mesh.rotation.x = Math.sin(t * 0.4 + planet.index) * 0.12;
+        const world = new THREE.Vector3();
+        planet.mesh.getWorldPosition(world);
+        const entry = planet.batchEntry || cloudEntryFor(world, planet.emitSeed);
+        const launchDir = entryTargetFor(world, entry).sub(world).normalize();
+        const mount = world.clone().addScaledVector(launchDir, planet.size * 1.25);
+        updateFactory(planet, mount, launchDir, t);
+        updateEmissionQueue(planet, world, muzzleTipFor(planet, launchDir), launchDir, dt);
+        updateShots(planet, dt);
+      }
+    }
+
+    function updateCamera(t) {
+      if (!state.dragging) state.cameraYaw += 0.0005;
+      const distance = state.cameraDistance;
+      const pitch = THREE.MathUtils.clamp(state.cameraPitch, -0.85, 0.85);
+      camera.position.set(
+        Math.sin(state.cameraYaw) * Math.cos(pitch) * distance,
+        Math.sin(pitch) * distance,
+        Math.cos(state.cameraYaw) * Math.cos(pitch) * distance
+      ).add(state.cameraTarget);
+      camera.lookAt(state.cameraTarget);
+      star.rotation.y = t * 0.09;
+      corona.rotation.y = -t * 0.045;
+      corona.rotation.z = t * 0.025;
+    }
+
+    async function refreshData() {
+      const { start, end } = todayRange();
+      try {
+        const params = new URLSearchParams({ start, end });
+        const [usage, agents, events] = await Promise.all([
+          getJson("/api/usage/summary?" + params),
+          getJson("/api/agents"),
+          getJson("/api/events?" + new URLSearchParams({ start, end, limit: "20000" })),
+        ]);
+        state.targetTokens = Number(usage.summary?.real_total_tokens || 0);
+        state.targetClouds = Math.floor(state.targetTokens / TOKEN_PER_CLOUD);
+        state.structureBlocks = Math.floor(state.targetTokens / STRUCTURE_TOKEN_COST);
+        state.targetFreeClouds = Math.max(0, state.targetClouds - state.structureBlocks * STRUCTURE_CLOUD_COST);
+        if (!state.cloudsHydrated) {
+          state.visualClouds = state.targetFreeClouds;
+          state.cloudsHydrated = true;
+        }
+        const usageByAgent = usageCloudsByAgent(events.events || []);
+        syncPlanets(groupAgentRows(agents.agents || []), usageByAgent);
+        els.statusLine.textContent = "live " + new Date().toLocaleTimeString();
+      } catch (error) {
+        els.statusLine.textContent = "api error: " + (error?.message || String(error));
+      }
+    }
+
+    function syncPlanets(agentRows, usageByAgent) {
+      const apiSources = new Set(agentRows.map((row) => row.source_agent || row.agent_key));
+      const debugRows = [...state.debugAgents.values()].filter((row) => !apiSources.has(row.source_agent || row.agent_key));
+      const rows = [...agentRows, ...debugRows].slice(0, MAX_PLANETS);
+      if (!rows.length && state.targetTokens > 0) {
+        rows.push({
+          agent_key: "cultivagent:local:default:unknown:",
+          source_agent: "cultivagent",
+          host_id: "local",
+          workspace_id: "default",
+          session_id: "unknown",
+          status: "ok",
+          last_event_at: new Date().toISOString(),
+          summary: { username: "local", meta: { agent_status: "running" } },
+        });
+      }
+      const nextKeys = new Set(rows.map((row) => row.agent_key));
+      for (const [key, planet] of planets) {
+        if (nextKeys.has(key)) continue;
+        root.remove(planet.pivot);
+        scene.remove(planet.factory);
+        scene.remove(planet.statusRing);
+        for (const shot of planet.shots) {
+          scene.remove(shot.trail);
+          scene.remove(shot.projectile);
+          shot.trail.material.dispose();
+          shot.projectile.material.dispose();
+        }
+        planets.delete(key);
+        const index = planetMeshes.indexOf(planet.mesh);
+        if (index >= 0) planetMeshes.splice(index, 1);
+      }
+      rows.forEach((row, index) => {
+        const key = row.agent_key;
+        let planet = planets.get(key);
+        if (!planet) {
+          planet = createPlanet(key, index);
+          planets.set(key, planet);
+          planetMeshes.push(planet.mesh);
+        }
+        planet.index = index;
+        planet.row = row;
+        planet.status = statusOf(row);
+        planet.mesh.material.color.set(statusColor(planet.status));
+        planet.mesh.material.emissive.set(statusColor(planet.status));
+        const nextTarget = usageByAgent.get(key) || usageByAgent.get(row.source_agent) || 0;
+        state.agentCloudTargets.set(key, nextTarget);
+      });
+      state.agents = rows;
+      renderAgentRows();
+    }
+
+    function groupAgentRows(rows) {
+      const grouped = new Map();
+      for (const row of rows) {
+        const key = row.source_agent || row.agent_key;
+        const current = grouped.get(key);
+        if (!current || String(row.last_event_at || "") > String(current.last_event_at || "")) {
+          grouped.set(key, { ...row, agent_key: key, session_id: row.session_id || "mixed" });
+        }
+      }
+      return [...grouped.values()];
+    }
+
+    function createPlanet(key, index) {
+      const radius = CLOUD_RADIUS_MAX + 24 + (index % 9) * 18 + Math.floor(index / 9) * 8;
+      const size = 2.2 + (index % 5) * 0.28;
+      const speed = 0.06 / Math.sqrt(index + 1);
+      const baseAngle = index * 2.399963;
+      const tilt = ((index % 7) - 3) * 0.018;
+      const color = new THREE.Color(statusColor("idle"));
+      const pivot = new THREE.Group();
+      pivot.rotation.z = tilt;
+      root.add(pivot);
+
+      const mesh = new THREE.Mesh(
+        new THREE.SphereGeometry(size, 24, 16),
+        new THREE.MeshStandardMaterial({
+          color,
+          emissive: color,
+          emissiveIntensity: 0.42,
+          roughness: 0.62,
+          metalness: 0.12,
+        })
+      );
+      mesh.position.x = radius;
+      mesh.userData.kind = "planet";
+      mesh.userData.key = key;
+      pivot.add(mesh);
+
+      const factory = new THREE.Group();
+      const base = new THREE.Mesh(
+        new THREE.BoxGeometry(1.8, 1.0, 1.2),
+        new THREE.MeshBasicMaterial({ color: 0x83e8ff, transparent: true, opacity: 0.82 })
+      );
+      const muzzle = new THREE.Mesh(
+        muzzleGeometry,
+        new THREE.MeshBasicMaterial({ color: 0xb9f6ff, transparent: true, opacity: 0.86 })
+      );
+      factory.add(base, muzzle);
+      scene.add(factory);
+
+      const statusRing = new THREE.Mesh(
+        ringGeometry,
+        new THREE.MeshBasicMaterial({ color: 0x61dafb, transparent: true, opacity: 0.0, depthWrite: false, blending: THREE.AdditiveBlending })
+      );
+      scene.add(statusRing);
+
+      return {
+        key, index, pivot, mesh, factory, base, muzzle, statusRing,
+        radius, size, speed, baseAngle, color, shots: [], emitAccumulator: 0, emitSeed: 0, batchEntry: null,
+      };
+    }
+
+    function updateFactory(planet, source, launchDir, t) {
+      const status = planet.status || "idle";
+      const color = new THREE.Color(statusColor(status));
+      planet.color.copy(color);
+      planet.base.material.color.copy(color);
+      planet.muzzle.material.color.copy(color);
+      planet.statusRing.material.color.copy(color);
+      const pulse = status === "idle" || status === "done" ? 0.12 : 0.34 + Math.sin(t * 5) * 0.12;
+      planet.statusRing.material.opacity = pulse;
+      planet.statusRing.position.copy(planet.mesh.getWorldPosition(new THREE.Vector3()));
+      planet.statusRing.scale.setScalar(planet.size * 1.65);
+      planet.statusRing.quaternion.copy(camera.quaternion);
+
+      const dir = launchDir.clone().normalize();
+      planet.factory.position.copy(source);
+      planet.factory.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir);
+      planet.base.position.set(0, -0.2, 0);
+      planet.muzzle.position.set(0, 1.15, 0);
+      const hot = (state.pendingByAgent.get(planet.key) || 0) > 0 || status === "tool_calling";
+      planet.muzzle.material.opacity = hot ? 0.96 : 0.55;
+      planet.factory.scale.setScalar(planet.size * 0.45);
+    }
+
+    function updateEmissionQueue(planet, source, muzzleTip, launchDir, dt) {
+      let pending = state.pendingByAgent.get(planet.key) || 0;
+      if (pending <= 0) {
+        planet.emitAccumulator = 0;
+        planet.batchEntry = null;
+        return;
+      }
+      if (!planet.batchEntry) planet.batchEntry = cloudEntryFor(source, planet.emitSeed++);
+      planet.emitAccumulator += dt * CLOUD_EMIT_RATE;
+      while (planet.emitAccumulator >= 1 && pending > 0 && planet.shots.length < MAX_ACTIVE_SHOTS) {
+        spawnCloudShot(planet, muzzleTip, planet.batchEntry, launchDir);
+        pending -= 1;
+        planet.emitAccumulator -= 1;
+      }
+      if (planet.shots.length >= MAX_ACTIVE_SHOTS) {
+        planet.emitAccumulator = Math.min(planet.emitAccumulator, 1);
+      }
+      state.pendingByAgent.set(planet.key, pending);
+      if (pending <= 0) planet.batchEntry = null;
+    }
+
+    function spawnCloudShot(planet, source, entry, launchDir) {
+      const color = planet.color.clone();
+      const projectile = new THREE.Mesh(
+        projectileGeometry,
+        new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0, depthWrite: false, blending: THREE.AdditiveBlending })
+      );
+      const trail = new THREE.Mesh(
+        trailGeometry,
+        new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0, depthWrite: false, blending: THREE.AdditiveBlending })
+      );
+      projectile.frustumCulled = false;
+      trail.frustumCulled = false;
+      scene.add(projectile, trail);
+
+      const shotLaunchDir = launchDir.clone().normalize();
+      const target = rayEntryTarget(source, shotLaunchDir, entry.entryRadius || CLOUD_ENTRY_RADIUS);
+      const tangentDir = tangentFor(target.clone().setY(0).normalize());
+      planet.shots.push({
+        progress: 0,
+        source: source.clone(),
+        target: target.clone(),
+        launchDir: shotLaunchDir,
+        tangent: tangentDir,
+        projectile,
+        trail,
+      });
+    }
+
+    function muzzleTipFor(planet, launchDir) {
+      return planet.factory.localToWorld(new THREE.Vector3(0, 2.35, 0)).addScaledVector(launchDir, 0.42);
+    }
+
+    function updateShots(planet, dt) {
+      for (let i = planet.shots.length - 1; i >= 0; i -= 1) {
+        const shot = planet.shots[i];
+        shot.progress = Math.min(1, shot.progress + dt / SHOT_DURATION);
+        const fade = Math.min(1, shot.progress / 0.14, (1 - shot.progress) / 0.18);
+        const eased = smoothstep(shot.progress);
+        const prevEase = smoothstep(Math.max(0, shot.progress - 0.018));
+        const pos = shot.source.clone().lerp(shot.target, eased);
+        const prev = shot.source.clone().lerp(shot.target, prevEase);
+        shot.projectile.position.copy(pos);
+        shot.projectile.material.opacity = 0.88 * fade;
+        shot.projectile.scale.setScalar(0.72 + fade * 0.28);
+
+        if (shot.progress < 0.025) {
+          shot.trail.material.opacity = 0;
+        } else {
+          orientCylinderBetween(shot.trail, prev, pos);
+          shot.trail.material.opacity = 0.46 * fade;
+        }
+
+        if (shot.progress >= 1) {
+          spawnInjectedCloud(shot.target, shot.tangent, planet.color);
+          scene.remove(shot.trail, shot.projectile);
+          shot.trail.material.dispose();
+          shot.projectile.material.dispose();
+          planet.shots.splice(i, 1);
+        }
+      }
+    }
+
+    function spawnInjectedCloud(target, tangent, color) {
+      const cloudTarget = nextCloudTarget(target, tangent);
+      const material = new THREE.MeshBasicMaterial({
+        color,
+        transparent: true,
+        opacity: 0.82,
+        depthWrite: false,
+        blending: THREE.AdditiveBlending,
+      });
+      const mesh = new THREE.Mesh(injectedCloudGeometry, material);
+      mesh.frustumCulled = false;
+      mesh.position.copy(target);
+      scene.add(mesh);
+      injectedClouds.push({
+        mesh,
+        start: target.clone(),
+        targetWorld: cloudTarget.world,
+        tangent: tangent.clone().normalize(),
+        age: 0,
+      });
+    }
+
+    function updateInjectedClouds(dt) {
+      for (let i = injectedClouds.length - 1; i >= 0; i -= 1) {
+        const cloud = injectedClouds[i];
+        cloud.age += dt;
+        const p = Math.min(1, cloud.age / INJECTION_DURATION);
+        const eased = smoothstep(p);
+        cloud.mesh.position.copy(orbitLerp(cloud.start, cloud.targetWorld, cloud.tangent, eased));
+        cloud.mesh.material.opacity = 0.82 * (1 - eased);
+        cloud.mesh.scale.setScalar(0.9 - eased * 0.28);
+        if (p >= 1) {
+          commitCloudPoint();
+          scene.remove(cloud.mesh);
+          cloud.mesh.material.dispose();
+          injectedClouds.splice(i, 1);
+        }
+      }
+    }
+
+    function commitCloudPoint() {
+      const index = Math.floor(state.visualClouds);
+      if (index >= FREE_CLOUD_MAX) return;
+      state.visualClouds = index + 1;
+      state.freeClouds = index + 1;
+      clouds.geometry.setDrawRange(0, state.freeClouds);
+    }
+
+    function cloudEntryFor(source, seed) {
+      const base = source.clone();
+      base.y = 0;
+      if (base.lengthSq() < 0.001) base.set(1, 0, 0);
+      base.normalize();
+      const sourceRadius = Math.hypot(source.x, source.z);
+      const entryRadius = Math.min(CLOUD_ENTRY_RADIUS, Math.max(CLOUD_RADIUS_MAX - 2, sourceRadius * 1.12));
+      let best = null;
+      for (const sign of [1, -1]) {
+        for (let step = 0; step < 14; step += 1) {
+          const advance = sign * (0.18 + step * 0.055 + random01(seed + step * 17) * 0.035);
+          const radial = base.clone().applyAxisAngle(new THREE.Vector3(0, 1, 0), advance).normalize();
+          const tangent = tangentFor(radial);
+          const target = radial.clone().multiplyScalar(entryRadius);
+          const score = horizontalTangentDot(source, target, tangent);
+          const launchDir = target.clone().sub(source).normalize();
+          const launchFlat = launchDir.clone().setY(0).normalize();
+          if (!best || score > best.score) best = { target, tangent, launchDir, launchFlat, entryRadius, score };
+          if (score >= HORIZONTAL_TANGENT_COS) return { target, tangent, launchDir, launchFlat, entryRadius };
+        }
+      }
+      return best;
+    }
+
+    function entryTargetFor(source, entry) {
+      const dir = entry.launchFlat.clone().normalize();
+      const radius = entry.entryRadius || CLOUD_ENTRY_RADIUS;
+      return rayEntryTarget(source, dir, radius);
+    }
+
+    function rayEntryTarget(source, dir, radius) {
+      if (Math.abs(dir.y) > 0.001) {
+        const planeDistance = -source.y / dir.y;
+        if (planeDistance > 0) return source.clone().addScaledVector(dir, planeDistance);
+      }
+      const b = 2 * (source.x * dir.x + source.z * dir.z);
+      const c = source.x ** 2 + source.z ** 2 - radius ** 2;
+      const disc = Math.max(0, b * b - 4 * c);
+      const near = (-b - Math.sqrt(disc)) / 2;
+      const far = (-b + Math.sqrt(disc)) / 2;
+      const distance = near > 0 ? near : far > 0 ? far : radius;
+      const target = source.clone().addScaledVector(dir, distance);
+      target.y = 0;
+      return target;
+    }
+
+    function nextCloudTarget(worldPosition, tangent) {
+      const local = cloudGroup.worldToLocal(worldPosition.clone());
+      const base = Math.floor(state.visualClouds);
+      if (base >= FREE_CLOUD_MAX) return { world: worldPosition.clone() };
+      let best = -1;
+      let bestDistance = Infinity;
+      const limit = Math.min(FREE_CLOUD_MAX, base + 2048);
+      for (let i = base; i < limit; i += 1) {
+        const x = cloudSeedPositions[i * 3];
+        const y = cloudSeedPositions[i * 3 + 1];
+        const z = cloudSeedPositions[i * 3 + 2];
+        const candidateWorld = cloudGroup.localToWorld(new THREE.Vector3(x, y, z));
+        const forward = candidateWorld.clone().sub(worldPosition).dot(tangent);
+        if (horizontalTangentDot(worldPosition, candidateWorld, tangent) < HORIZONTAL_TANGENT_COS) continue;
+        const distance = (x - local.x) ** 2 + (y - local.y) ** 2 + (z - local.z) ** 2 - forward * 0.35;
+        if (distance < bestDistance) {
+          best = i;
+          bestDistance = distance;
+        }
+      }
+      if (best < 0) best = base;
+      swapCloudSeed(base, best);
+      const targetLocal = new THREE.Vector3(
+        cloudSeedPositions[base * 3],
+        cloudSeedPositions[base * 3 + 1],
+        cloudSeedPositions[base * 3 + 2],
+      );
+      const targetWorld = cloudGroup.localToWorld(targetLocal.clone());
+      return { world: targetWorld };
+    }
+
+    function horizontalTangentDot(from, to, tangent) {
+      const dir = to.clone().sub(from);
+      dir.y = 0;
+      const tan = tangent.clone();
+      tan.y = 0;
+      if (dir.lengthSq() < 0.001 || tan.lengthSq() < 0.001) return -1;
+      return dir.normalize().dot(tan.normalize());
+    }
+
+    function orbitLerp(a, b, tangent, t) {
+      const ra = Math.hypot(a.x, a.z);
+      const aa = Math.atan2(a.z, a.x);
+      const ab = Math.atan2(b.z, b.x);
+      let delta = ab - aa;
+      const positiveDir = new THREE.Vector3(-Math.sin(aa), 0, Math.cos(aa));
+      const sign = positiveDir.dot(tangent.clone().setY(0).normalize()) >= 0 ? 1 : -1;
+      if (sign > 0) while (delta < 0) delta += Math.PI * 2;
+      if (sign < 0) while (delta > 0) delta -= Math.PI * 2;
+      const angle = aa + delta * t;
+      return new THREE.Vector3(
+        Math.cos(angle) * ra,
+        THREE.MathUtils.lerp(a.y, b.y, t),
+        Math.sin(angle) * ra,
+      );
+    }
+
+    function swapCloudSeed(a, b) {
+      if (a === b) return;
+      const attr = cloudGeometry.attributes.position;
+      for (let offset = 0; offset < 3; offset += 1) {
+        const ai = a * 3 + offset;
+        const bi = b * 3 + offset;
+        const value = cloudSeedPositions[ai];
+        cloudSeedPositions[ai] = cloudSeedPositions[bi];
+        cloudSeedPositions[bi] = value;
+        attr.array[ai] = cloudSeedPositions[ai];
+        attr.array[bi] = cloudSeedPositions[bi];
+      }
+      attr.needsUpdate = true;
+    }
+
+    function smoothstep(t) {
+      return t * t * (3 - 2 * t);
+    }
+
+    function tangentFor(radial) {
+      let tangent = new THREE.Vector3().crossVectors(new THREE.Vector3(0, 1, 0), radial);
+      if (tangent.lengthSq() < 0.001) tangent = new THREE.Vector3().crossVectors(new THREE.Vector3(1, 0, 0), radial);
+      return tangent.normalize();
+    }
+
+    function orientCylinderBetween(mesh, a, b) {
+      const delta = b.clone().sub(a);
+      const length = delta.length();
+      if (length <= 0.001) {
+        mesh.material.opacity = 0;
+        return;
+      }
+      mesh.position.copy(a).addScaledVector(delta, 0.5);
+      mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), delta.normalize());
+      mesh.scale.set(1, length, 1);
+    }
+
+    function usageCloudsByAgent(events) {
+      const map = new Map();
+      for (const event of events) {
+        const total = usageTotal(event);
+        if (!total) continue;
+        const clouds = Math.floor(total / TOKEN_PER_CLOUD);
+        const key = [event.source_agent, event.host_id, event.workspace_id, event.session_id, event.agent_id || ""].join(":");
+        map.set(key, (map.get(key) || 0) + clouds);
+        map.set(event.source_agent, (map.get(event.source_agent) || 0) + clouds);
+      }
+      return map;
+    }
+
+    function updateHover() {
+      raycaster.setFromCamera(state.mouse, camera);
+      const hits = raycaster.intersectObjects([star, ...planetMeshes], false);
+      const hit = hits[0]?.object;
+      state.hover = hit || null;
+      if (!hit) {
+        els.tooltip.style.display = "none";
+        return;
+      }
+      els.tooltip.style.display = "block";
+      els.tooltip.style.left = Math.min(window.innerWidth - els.tooltip.offsetWidth - 8, state.pointer.x + 14) + "px";
+      els.tooltip.style.top = Math.min(window.innerHeight - els.tooltip.offsetHeight - 8, state.pointer.y + 14) + "px";
+      els.tooltip.innerHTML = hit.userData.kind === "star" ? starTooltip() : planetTooltip(hit.userData.key);
+    }
+
+    function starTooltip() {
+      const rows = state.agents.slice(0, 10).map((row) => {
+        const status = statusOf(row);
+        return `${escapeHtml(agentName(row))} <span class="mono">${escapeHtml(row.source_agent)} / ${escapeHtml(status)}</span>`;
+      }).join("<br>");
+      return `<strong>恒星 / 今日系统</strong>
+        <div class="mono">tokens ${nf.format(state.targetTokens)} / clouds ${nf.format(state.targetClouds)}</div>
+        <div class="mono">blocks ${nf.format(state.structureBlocks)} / free clouds ${nf.format(state.freeClouds)}</div>
+        <div style="margin-top:7px">${rows || '<span class="mono">no agents</span>'}</div>`;
+    }
+
+    function planetTooltip(key) {
+      const planet = planets.get(key);
+      if (!planet) return "";
+      const row = planet.row;
+      return `<strong>${escapeHtml(agentName(row))}</strong>
+        <div class="mono">agent ${escapeHtml(row.source_agent)}</div>
+        <div class="mono">status ${escapeHtml(statusOf(row))}</div>
+        <div class="mono">session ${escapeHtml(row.session_id || "unknown")}</div>
+        <div class="mono">clouds ${nf.format(state.agentCloudTargets.get(key) || 0)}</div>`;
+    }
+
+    function renderHud() {
+      els.tokenValue.textContent = short.format(state.targetTokens);
+      els.cloudValue.textContent = short.format(state.targetClouds);
+      els.shellValue.textContent = short.format(state.structureBlocks);
+      els.freeValue.textContent = short.format(state.freeClouds);
+      els.clockLine.textContent = `1 cloud = ${TOKEN_PER_CLOUD} tokens / 1 block = 1000万 tokens`;
+    }
+
+    function renderAgentRows() {
+      els.agentCount.textContent = String(state.agents.length);
+      els.agentRows.innerHTML = state.agents.map((row) => {
+        const status = statusOf(row);
+        const color = statusColor(status);
+        return `<div class="agent-row">
+          <span class="dot" style="color:${color};background:${color}"></span>
+          <span>
+            <span class="agent-name">${escapeHtml(agentName(row))}</span>
+            <span class="agent-meta">${escapeHtml(row.source_agent)} / ${escapeHtml(row.summary?.model || row.summary?.provider || "unknown")}</span>
+          </span>
+          <span class="agent-status">${escapeHtml(status)}</span>
+        </div>`;
+      }).join("");
+      renderDebugAgents();
+    }
+
+    function renderDebugAgents() {
+      const selected = els.debugAgent.value;
+      const defaults = ["codex", "claude-code", "opencode", "openclaw", "locus", "pi"];
+      const agents = [...new Set([...state.agents.map((row) => row.source_agent), ...defaults].filter(Boolean))];
+      els.debugAgent.innerHTML = agents.map((agent) => `<option value="${escapeHtml(agent)}">${escapeHtml(agent)}</option>`).join("");
+      els.debugAgent.value = agents.includes(selected) ? selected : agents[0] || "codex";
+    }
+
+    function debugTokens() {
+      return Math.max(100, Number(els.debugTokens.value) || 10000);
+    }
+
+    function debugAgent() {
+      return els.debugAgent.value || "codex";
+    }
+
+    function enqueueClouds(agent, clouds) {
+      const amount = Math.max(1, Math.floor(clouds));
+      ensureVisualAgent(agent);
+      state.pendingByAgent.set(agent, (state.pendingByAgent.get(agent) || 0) + amount);
+      return amount;
+    }
+
+    function ensureVisualAgent(agent) {
+      if (planets.has(agent)) return;
+      const row = {
+        agent_key: agent,
+        source_agent: agent,
+        host_id: `debug-host-${agent}`,
+        workspace_id: "dyson-debug",
+        session_id: `dyson-debug-${agent}`,
+        status: "ok",
+        last_event_at: new Date().toISOString(),
+        summary: { username: `debug-${agent}`, meta: { agent_status: "running" } },
+      };
+      state.debugAgents.set(agent, row);
+      syncPlanets(state.agents, new Map(state.agentCloudTargets));
+    }
+
+    async function postDebugUsage(tokens, label) {
+      const agent = debugAgent();
+      const clouds = Math.floor(tokens / TOKEN_PER_CLOUD);
+      const queued = enqueueClouds(agent, clouds);
+      await postDebugEvents([debugEvent(agent, {
+        event_type: "model_response",
+        usage: { input_tokens: Math.floor(tokens * 0.65), output_tokens: Math.ceil(tokens * 0.35) },
+        agent_status: "done",
+      })], `${label}: ${nf.format(tokens)} tokens / queued ${nf.format(queued)} clouds @ ${CLOUD_EMIT_RATE}/s`);
+    }
+
+    async function postDebugStructure() {
+      const agent = debugAgent();
+      await postDebugEvents([debugEvent(agent, {
+        event_type: "model_response",
+        usage: { input_tokens: STRUCTURE_TOKEN_COST, output_tokens: 0 },
+        agent_status: "done",
+      })], `structure: ${agent} +1 block`);
+    }
+
+    async function postDebugStatus() {
+      const agent = debugAgent();
+      const agentStatus = els.debugStatus.value;
+      await postDebugEvents([debugEvent(agent, {
+        event_type: statusEventType(agentStatus),
+        agent_status: agentStatus,
+        status: agentStatus === "error" ? "error" : "ok",
+      })], `status: ${agent} -> ${agentStatus}`);
+    }
+
+    function fireDebugBeam() {
+      const agent = debugAgent();
+      const clouds = Math.max(1, Math.floor(debugTokens() / TOKEN_PER_CLOUD));
+      const queued = enqueueClouds(agent, clouds);
+      els.debugLog.textContent = `visual beam: ${agent} +${nf.format(queued)} clouds @ ${CLOUD_EMIT_RATE}/s`;
+    }
+
+    async function postDebugEvents(events, label) {
+      els.debugLog.textContent = "posting " + label;
+      const res = await fetch("/ingest", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ events }),
+      });
+      if (!res.ok) {
+        els.debugLog.textContent = `debug failed: ${res.status}`;
+        return;
+      }
+      const data = await res.json();
+      els.debugLog.textContent = `${label} / inserted ${data.inserted}`;
+      await refreshData();
+    }
+
+    function debugEvent(agent, extra) {
+      const now = new Date();
+      return {
+        event_id: `dyson-debug-${agent}-${now.getTime()}-${Math.random().toString(16).slice(2)}`,
+        source_agent: agent,
+        source_surface: "dyson-debug",
+        occurred_at: now.toISOString(),
+        username: `debug-${agent}`,
+        host_id: `debug-host-${agent}`,
+        workspace_id: "dyson-debug",
+        session_id: `dyson-debug-${agent}`,
+        agent_id: `${agent}-debug`,
+        model: debugModel(agent),
+        provider: agent,
+        ...extra,
+      };
+    }
+
+    function debugModel(agent) {
+      return ({
+        codex: "gpt-5-codex",
+        "claude-code": "claude-sonnet",
+        opencode: "deepseek-v4-pro",
+        openclaw: "openclaw-agent",
+        locus: "gpt-5-locus",
+        pi: "pi-agent",
+      })[agent] || "debug-model";
+    }
+
+    function statusEventType(status) {
+      return ({
+        thinking: "before_provider_request",
+        streaming: "message_update",
+        tool_calling: "PreToolUse",
+        waiting_approval: "PermissionRequest",
+        done: "Stop",
+        error: "StopFailure",
+      })[status] || "hook_event";
+    }
+
+    function buildCloudGeometry(count) {
+      const positions = new Float32Array(count * 3);
+      for (let i = 0; i < count; i += 1) {
+        const u = random01(i * 3 + 1);
+        const v = random01(i * 3 + 2);
+        const w = random01(i * 3 + 3);
+        const angle = u * Math.PI * 2;
+        const band = (v - 0.5) * 0.34;
+        const radius = CLOUD_RADIUS_MIN + Math.pow(w, 0.58) * (CLOUD_RADIUS_MAX - CLOUD_RADIUS_MIN);
+        positions[i * 3] = Math.cos(angle) * radius;
+        positions[i * 3 + 1] = Math.sin(band) * radius * 0.34 + (random01(i + 11) - 0.5) * 3.8;
+        positions[i * 3 + 2] = Math.sin(angle) * radius;
+      }
+      const geometry = new THREE.BufferGeometry();
+      const attr = new THREE.BufferAttribute(positions, 3);
+      attr.setUsage(THREE.StaticDrawUsage);
+      geometry.setAttribute("position", attr);
+      geometry.computeBoundingSphere();
+      return geometry;
+    }
+
+    function buildSoccerShell(radius) {
+      const t = (1 + Math.sqrt(5)) / 2;
+      const verts = [
+        [-1, t, 0], [1, t, 0], [-1, -t, 0], [1, -t, 0],
+        [0, -1, t], [0, 1, t], [0, -1, -t], [0, 1, -t],
+        [t, 0, -1], [t, 0, 1], [-t, 0, -1], [-t, 0, 1],
+      ].map(([x, y, z]) => new THREE.Vector3(x, y, z).normalize());
+      const faces = [
+        [0, 11, 5], [0, 5, 1], [0, 1, 7], [0, 7, 10], [0, 10, 11],
+        [1, 5, 9], [5, 11, 4], [11, 10, 2], [10, 7, 6], [7, 1, 8],
+        [3, 9, 4], [3, 4, 2], [3, 2, 6], [3, 6, 8], [3, 8, 9],
+        [4, 9, 5], [2, 4, 11], [6, 2, 10], [8, 6, 7], [9, 8, 1],
+      ];
+      const directed = new Map();
+      const point = (a, b) => {
+        const key = `${a}:${b}`;
+        if (!directed.has(key)) {
+          directed.set(key, verts[a].clone().multiplyScalar(0.64).addScaledVector(verts[b], 0.36).normalize().multiplyScalar(radius));
+        }
+        return directed.get(key);
+      };
+      const panels = [];
+      const neighbors = new Map(verts.map((_, i) => [i, new Set()]));
+      for (const [a, b, c] of faces) {
+        neighbors.get(a).add(b).add(c);
+        neighbors.get(b).add(a).add(c);
+        neighbors.get(c).add(a).add(b);
+        panels.push({ keys: [`${a}:${b}`, `${b}:${a}`, `${b}:${c}`, `${c}:${b}`, `${c}:${a}`, `${a}:${c}`] });
+      }
+      for (let i = 0; i < verts.length; i += 1) {
+        const center = verts[i];
+        const axis = Math.abs(center.y) < 0.9 ? new THREE.Vector3(0, 1, 0) : new THREE.Vector3(1, 0, 0);
+        const right = new THREE.Vector3().crossVectors(axis, center).normalize();
+        const up = new THREE.Vector3().crossVectors(center, right).normalize();
+        const ordered = [...neighbors.get(i)].sort((a, b) => {
+          const da = verts[a].clone().sub(center);
+          const db = verts[b].clone().sub(center);
+          return Math.atan2(da.dot(up), da.dot(right)) - Math.atan2(db.dot(up), db.dot(right));
+        });
+        panels.push({ keys: ordered.map((n) => `${i}:${n}`) });
+      }
+      for (const panel of panels) {
+        panel.points = panel.keys.map((key) => {
+          const [a, b] = key.split(":").map(Number);
+          return point(a, b);
+        });
+        panel.center = panel.points.reduce((sum, p) => sum.add(p), new THREE.Vector3()).multiplyScalar(1 / panel.points.length).normalize().multiplyScalar(radius);
+      }
+      const ordered = orderAdjacentPanels(panels);
+      const panelPositions = [];
+      const outlinePositions = [];
+      const panelEnds = [];
+      const outlineEnds = [];
+      for (const panel of ordered) {
+        const center = panel.center.clone().multiplyScalar(1.012);
+        const outer = panel.points.map((p) => p.clone().multiplyScalar(1.012));
+        const inner = outer.map((p) => center.clone().lerp(p, 0.52).normalize().multiplyScalar(center.length()));
+        for (let i = 0; i < panel.points.length; i += 1) {
+          const a = outer[i];
+          const b = outer[(i + 1) % outer.length];
+          const ia = inner[i];
+          const ib = inner[(i + 1) % inner.length];
+          panelPositions.push(
+            a.x, a.y, a.z, b.x, b.y, b.z, ia.x, ia.y, ia.z,
+            b.x, b.y, b.z, ib.x, ib.y, ib.z, ia.x, ia.y, ia.z,
+          );
+          outlinePositions.push(a.x, a.y, a.z, b.x, b.y, b.z);
+          outlinePositions.push(ia.x, ia.y, ia.z, ib.x, ib.y, ib.z);
+        }
+        panelEnds.push(panelPositions.length / 3);
+        outlineEnds.push(outlinePositions.length / 3);
+      }
+      const panelGeometry = new THREE.BufferGeometry();
+      panelGeometry.setAttribute("position", new THREE.Float32BufferAttribute(panelPositions, 3));
+      panelGeometry.computeBoundingSphere();
+      const outlineGeometry = new THREE.BufferGeometry();
+      outlineGeometry.setAttribute("position", new THREE.Float32BufferAttribute(outlinePositions, 3));
+      outlineGeometry.computeBoundingSphere();
+      const panelsMesh = new THREE.Mesh(panelGeometry, new THREE.MeshBasicMaterial({
+        color: 0xf5c56a,
+        transparent: true,
+        opacity: 0,
+        side: THREE.DoubleSide,
+        depthWrite: false,
+        blending: THREE.AdditiveBlending,
+      }));
+      const outlines = new THREE.LineSegments(outlineGeometry, new THREE.LineBasicMaterial({
+        color: 0xffdd88,
+        transparent: true,
+        opacity: 0,
+        depthWrite: false,
+      }));
+      panelsMesh.geometry.setDrawRange(0, 0);
+      outlines.geometry.setDrawRange(0, 0);
+      return { panels: panelsMesh, outlines, panelEnds, outlineEnds, panelCount: ordered.length, visible: 0 };
+    }
+
+    function orderAdjacentPanels(panels) {
+      const edgeToPanels = new Map();
+      panels.forEach((panel, index) => {
+        panel.edgeKeys = [];
+        for (let i = 0; i < panel.keys.length; i += 1) {
+          const edge = [panel.keys[i], panel.keys[(i + 1) % panel.keys.length]].sort().join("|");
+          panel.edgeKeys.push(edge);
+          const rows = edgeToPanels.get(edge) || [];
+          rows.push(index);
+          edgeToPanels.set(edge, rows);
+        }
+      });
+      const start = panels.reduce((best, panel, index) => panel.center.z > panels[best].center.z ? index : best, 0);
+      const seen = new Set([start]);
+      const queue = [start];
+      const ordered = [];
+      while (queue.length) {
+        const index = queue.shift();
+        ordered.push(panels[index]);
+        for (const edge of panels[index].edgeKeys) {
+          for (const next of edgeToPanels.get(edge) || []) {
+            if (seen.has(next)) continue;
+            seen.add(next);
+            queue.push(next);
+          }
+        }
+      }
+      return ordered.concat(panels.filter((_, index) => !seen.has(index)));
+    }
+
+    function setSoccerShellVisible(shell, count) {
+      if (shell.visible === count) return;
+      shell.visible = count;
+      const panels = count > 0 ? shell.panelEnds[count - 1] : 0;
+      const outlines = count > 0 ? shell.outlineEnds[count - 1] : 0;
+      shell.panels.geometry.setDrawRange(0, panels);
+      shell.outlines.geometry.setDrawRange(0, outlines);
+    }
+
+    function usageTotal(event) {
+      const u = event.usage || {};
+      return Number(u.input_tokens || 0) + Number(u.output_tokens || 0) + Number(u.cache_read_tokens || 0) + Number(u.cache_write_tokens || 0);
+    }
+
+    function statusOf(row) {
+      return row.summary?.meta?.agent_status || row.status || "idle";
+    }
+
+    function statusColor(status) {
+      if (status === "error") return "#ff5c78";
+      if (status.includes("waiting")) return "#ffb84d";
+      if (status === "tool_calling" || status === "streaming") return "#61dafb";
+      if (status === "thinking" || status === "running" || status === "compacting" || status === "delegating") return "#f5c56a";
+      if (status === "done" || status === "idle") return "#44d19d";
+      return "#91a4b8";
+    }
+
+    function agentName(row) {
+      return row.summary?.username || row.summary?.meta?.username || row.host_id || row.source_agent || "agent";
+    }
+
+    function todayRange() {
+      const start = new Date();
+      start.setHours(0, 0, 0, 0);
+      return { start: start.toISOString(), end: new Date().toISOString() };
+    }
+
+    async function getJson(url) {
+      const res = await fetch(url, { cache: "no-store" });
+      if (!res.ok) throw new Error(`${res.status} ${url}`);
+      return res.json();
+    }
+
+    function onResize() {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    }
+
+    function onPointerMove(event) {
+      state.pointer.x = event.clientX;
+      state.pointer.y = event.clientY;
+      state.mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+      state.mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+      if (state.dragging) {
+        const dx = event.clientX - state.lastPointer.x;
+        const dy = event.clientY - state.lastPointer.y;
+        if (state.dragMode === "orbit") {
+          state.cameraYaw -= dx * 0.005;
+          state.cameraPitch = THREE.MathUtils.clamp(state.cameraPitch + dy * 0.004, -0.85, 0.85);
+        } else if (state.dragMode === "pan") {
+          panCamera(dx, dy);
+        } else if (state.dragMode === "zoom") {
+          zoomCamera(dy * 0.01);
+        }
+        state.lastPointer.x = event.clientX;
+        state.lastPointer.y = event.clientY;
+      }
+    }
+
+    function onPointerDown(event) {
+      if (event.target.closest?.("a,button,input,select")) return;
+      event.preventDefault();
+      state.dragging = true;
+      state.dragMode = event.button === 1 ? "zoom" : event.button === 2 ? "pan" : "orbit";
+      state.lastPointer.x = event.clientX;
+      state.lastPointer.y = event.clientY;
+    }
+
+    function onPointerUp() {
+      state.dragging = false;
+      state.dragMode = "";
+    }
+
+    function onWheel(event) {
+      event.preventDefault();
+      zoomCamera(event.deltaY * 0.001);
+    }
+
+    function zoomCamera(delta) {
+      state.cameraDistance = THREE.MathUtils.clamp(state.cameraDistance * (1 + delta), 48, 420);
+    }
+
+    function panCamera(dx, dy) {
+      const forward = new THREE.Vector3().subVectors(state.cameraTarget, camera.position).normalize();
+      const right = new THREE.Vector3().crossVectors(forward, camera.up).normalize();
+      const up = new THREE.Vector3().crossVectors(right, forward).normalize();
+      const scale = state.cameraDistance * 0.0018;
+      state.cameraTarget.addScaledVector(right, dx * scale);
+      state.cameraTarget.addScaledVector(up, dy * scale);
+    }
+
+    function resetCamera() {
+      state.cameraYaw = 0;
+      state.cameraPitch = 0.38;
+      state.cameraDistance = 150;
+      state.cameraTarget.set(0, 0, 0);
+    }
+
+    function random01(seed) {
+      const x = Math.sin(seed * 12.9898) * 43758.5453123;
+      return x - Math.floor(x);
+    }
+
+    function tamedRotation(speed) {
+      return clock.elapsedTime * speed;
+    }
+
+    function escapeHtml(value) {
+      return String(value ?? "").replace(/[&<>"']/g, (ch) => ({
+        "&": "&amp;",
+        "<": "&lt;",
+        ">": "&gt;",
+        "\"": "&quot;",
+        "'": "&#39;",
+      })[ch]);
+    }
+  </script>
+</body>
+</html>

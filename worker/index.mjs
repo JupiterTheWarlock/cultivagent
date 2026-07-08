@@ -29,6 +29,10 @@ async function handleRequest(request, env) {
     if (!(await isAuthorized(request, env))) return html(loginPageHtml());
     return noStore(await env.ASSETS.fetch(assetRequest(request, "/")));
   }
+  if (request.method === "GET" && (url.pathname === "/dyson" || url.pathname === "/dyson.html")) {
+    if (!(await isAuthorized(request, env))) return html(loginPageHtml());
+    return noStore(await env.ASSETS.fetch(assetRequest(request, "/dyson.html")));
+  }
 
   if (!(await isAuthorized(request, env))) return json({ error: "unauthorized" }, 401);
 

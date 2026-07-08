@@ -391,10 +391,18 @@ try {
   assert.match(dashboard, /data-i18n="user"/);
   assert.match(dashboard, /使用统计/);
   assert.match(dashboard, /请求统计/);
+  assert.match(dashboard, /href="\/dyson"/);
   assert.match(dashboard, /composedPath/);
   assert.match(dashboard, /BACKFILL_OVERLAP_SECONDS/);
+  const dyson = await text(`${base}/dyson`);
+  assert.match(dyson, /Cultivagent Dyson/);
+  assert.match(dyson, /TOKEN_PER_CLOUD = 100/);
+  assert.match(dyson, /STRUCTURE_TOKEN_COST = 10_000_000/);
+  assert.match(dyson, /dyson-debug/);
+  assert.match(dyson, /debugStructureBtn/);
   const workerSource = readFileSync(new URL("../worker/index.mjs", import.meta.url), "utf8");
   assert.match(workerSource, /cache-control", "no-store"/);
+  assert.match(workerSource, /dyson\.html/);
 
   const events = await get(`${base}/api/events?limit=20`);
   const otelEvent = events.events.find((x) => x.source_surface === "otel" && x.source_agent === "claude-code");
