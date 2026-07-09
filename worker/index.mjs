@@ -575,6 +575,7 @@ function dysonFilters(params) {
     start: dateParam(params.get("start")),
     end: dateParam(params.get("end")),
     now: dateParam(params.get("now")),
+    detail: params.get("detail") === "1",
   };
 }
 

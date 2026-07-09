@@ -408,6 +408,10 @@ try {
   assert.match(dyson, /resetServiceReplay/);
   assert.match(dyson, /serviceSeeded/);
   assert.match(dyson, /replayClouds/);
+  assert.match(dyson, /planetOrbitPosition/);
+  assert.match(dyson, /orbit\.rotation\.x = inclination/);
+  assert.doesNotMatch(dyson, /planet\.pivot\.rotation\.y = planet\.baseAngle/);
+  assert.doesNotMatch(dyson, /orbit\.rotation\.z =/);
   assert.match(dyson, /color: 0xffffff/);
   assert.match(dyson, /rangeStart/);
   assert.match(dyson, /drawAtmosphere/);
@@ -440,7 +444,10 @@ try {
     session_id: "dyson-session-2",
     meta: { machine_name: "dyson-machine-2" },
   });
-  const dysonState = await get(`${base}/api/dyson/state?day=2026-07-02&now=2026-07-02T00:00:05.000Z`);
+  const dysonCompact = await get(`${base}/api/dyson/state?day=2026-07-02&now=2026-07-02T00:00:05.000Z`);
+  assert.equal("batches" in dysonCompact.agents[0], false);
+  assert.equal("active_shots" in dysonCompact.agents[0], false);
+  const dysonState = await get(`${base}/api/dyson/state?day=2026-07-02&now=2026-07-02T00:00:05.000Z&detail=1`);
   assert.equal(dysonState.totals.tokens, 10000);
   assert.equal(dysonState.totals.clouds, 100);
   assert.equal(dysonState.totals.free_clouds, 100);
@@ -456,7 +463,7 @@ try {
   assert.equal(launchingAgent.active_shots.length, 50);
   assert.equal(launchingAgent.active_shots[0].cloud_index, 0);
   assert.equal(launchingAgent.active_shots.at(-1).cloud_index, 49);
-  const dysonNearRing = await get(`${base}/api/dyson/state?day=2026-07-02&now=2026-07-02T00:00:08.450Z`);
+  const dysonNearRing = await get(`${base}/api/dyson/state?day=2026-07-02&now=2026-07-02T00:00:08.450Z&detail=1`);
   const nearRingAgent = dysonNearRing.agents.find((agent) => agent.source_agent === "codex");
   assert.equal(nearRingAgent.settled_clouds, 1);
   assert.equal(nearRingAgent.active_shots[0].cloud_index, 1);
@@ -466,7 +473,7 @@ try {
   const dysonStatusOnlyRange = await get(`${base}/api/dyson/state?start=2026-07-02T00:00:01.500Z&end=2026-07-02T00:00:02.500Z&now=2026-07-02T00:00:05.000Z`);
   assert.equal(dysonStatusOnlyRange.totals.tokens, 0);
   assert.equal(dysonStatusOnlyRange.agents.length, 0);
-  const dysonAfterRefresh = await get(`${base}/api/dyson/state?day=2026-07-02&now=2026-07-02T00:00:05.000Z`);
+  const dysonAfterRefresh = await get(`${base}/api/dyson/state?day=2026-07-02&now=2026-07-02T00:00:05.000Z&detail=1`);
   const launchingAfterRefresh = dysonAfterRefresh.agents.find((agent) => agent.source_agent === "codex");
   assert.deepEqual(launchingAfterRefresh.current_batch, launchingAgent.current_batch);
   assert.deepEqual(launchingAfterRefresh.active_shots, launchingAgent.active_shots);

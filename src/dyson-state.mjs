@@ -36,7 +36,8 @@ export function buildDysonState(events, agents = [], options = {}) {
     grouped.get(key).push(event);
   }
 
-  const stateAgents = [...grouped.entries()].map(([key, rows]) => buildAgentState(key, rows, agentRows.get(key), nowMs, constants));
+  const detailed = options.detail === true;
+  const stateAgents = [...grouped.entries()].map(([key, rows]) => buildAgentState(key, rows, agentRows.get(key), nowMs, constants, detailed));
   const totals = stateAgents.reduce((sum, agent) => {
     sum.tokens += agent.total_tokens;
     sum.clouds += agent.total_clouds;
@@ -61,10 +62,16 @@ export function buildDysonState(events, agents = [], options = {}) {
   };
 }
 
-function buildAgentState(key, events, agentRow, nowMs, constants) {
+function buildAgentState(key, events, agentRow, nowMs, constants, detailed = false) {
   let tokenCursor = 0;
   let batchCursorMs = 0;
+  let emittedClouds = 0;
+  let settledClouds = 0;
+  let pendingClouds = 0;
+  let currentBatch = null;
+  const activeShots = [];
   const batches = [];
+  const nowIso = new Date(nowMs).toISOString();
   for (const event of events) {
     const beforeClouds = Math.floor(tokenCursor / constants.token_per_cloud);
     tokenCursor += usageTotal(event);
@@ -85,14 +92,20 @@ function buildAgentState(key, events, agentRow, nowMs, constants) {
       entry_seed: hash32(`${batchId}:entry`),
       launch_seed: hash32(`${batchId}:launch`),
     }, nowMs, constants);
-    batches.push(batch);
+    emittedClouds += batch.emitted_clouds;
+    settledClouds += batch.settled_clouds;
+    pendingClouds += batch.pending_clouds;
+    if (detailed) {
+      batches.push(batch);
+      if (!currentBatch && batch.started_at <= nowIso && batch.pending_clouds > 0) currentBatch = batch;
+      activeShots.push(...batch.active_shots);
+      if (activeShots.length > constants.max_active_shots) activeShots.splice(0, activeShots.length - constants.max_active_shots);
+    }
     batchCursorMs = startedMs + (cloudCount / constants.emit_rate) * 1000;
   }
 
   const latest = events.at(-1) || {};
-  const activeShots = batches.flatMap((batch) => batch.active_shots).slice(-constants.max_active_shots);
-  const currentBatch = batches.find((batch) => batch.started_at <= new Date(nowMs).toISOString() && batch.pending_clouds > 0) || null;
-  return {
+  const out = {
     agent_key: key,
     source_agent: latest.source_agent || agentRow?.source_agent || "unknown",
     host_id: latest.host_id || agentRow?.host_id || "unknown",
@@ -102,13 +115,16 @@ function buildAgentState(key, events, agentRow, nowMs, constants) {
     summary: agentRow?.summary || { username: latest.username, meta: latest.meta || {} },
     total_tokens: tokenCursor,
     total_clouds: Math.floor(tokenCursor / constants.token_per_cloud),
-    emitted_clouds: batches.reduce((sum, batch) => sum + batch.emitted_clouds, 0),
-    settled_clouds: batches.reduce((sum, batch) => sum + batch.settled_clouds, 0),
-    pending_clouds: batches.reduce((sum, batch) => sum + batch.pending_clouds, 0),
-    current_batch: currentBatch,
-    active_shots: activeShots,
-    batches,
+    emitted_clouds: emittedClouds,
+    settled_clouds: settledClouds,
+    pending_clouds: pendingClouds,
   };
+  if (detailed) {
+    out.current_batch = currentBatch;
+    out.active_shots = activeShots;
+    out.batches = batches;
+  }
+  return out;
 }
 
 function batchState(batch, nowMs, constants) {

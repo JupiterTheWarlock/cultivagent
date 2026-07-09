@@ -534,7 +534,7 @@
 
     function updatePlanets(t, dt) {
       for (const planet of planets.values()) {
-        planet.pivot.rotation.y = planet.baseAngle + t * planet.speed;
+        planet.mesh.position.copy(planetOrbitPosition(planet, t));
         planet.mesh.rotation.y = t * 0.6;
         planet.mesh.rotation.x = Math.sin(t * 0.4 + planet.index) * 0.12;
         const world = new THREE.Vector3();
@@ -782,10 +782,9 @@
       const size = 2.2 + (index % 5) * 0.28;
       const speed = 0.06 / Math.sqrt(index + 1);
       const baseAngle = index * 2.399963;
-      const tilt = ((index % 7) - 3) * 0.018;
+      const inclination = THREE.MathUtils.degToRad(4 + (index % 6) * 2);
       const color = new THREE.Color(statusColor("idle"));
       const pivot = new THREE.Group();
-      pivot.rotation.z = tilt;
       root.add(pivot);
 
       const mesh = new THREE.Mesh(
@@ -798,7 +797,7 @@
           metalness: 0.12,
         })
       );
-      mesh.position.x = radius;
+      mesh.position.copy(planetOrbitPosition({ radius, baseAngle, speed, inclination }, 0));
       mesh.userData.kind = "planet";
       mesh.userData.key = key;
       pivot.add(mesh);
@@ -820,7 +819,7 @@
         buildOrbitGeometry(radius),
         new THREE.LineBasicMaterial({ color: 0x7fb8ff, transparent: true, opacity: 0.2, depthWrite: false })
       );
-      orbit.rotation.z = tilt;
+      orbit.rotation.x = inclination;
       root.add(orbit);
 
       const factory = new THREE.Group();
@@ -843,7 +842,7 @@
 
       const planet = {
         key, index, pivot, mesh, atmosphere, orbit, factory, base, muzzle, statusRing,
-        radius, size, speed, baseAngle, tilt, color, shots: [], emitAccumulator: 0, emitSeed: 0, batchEntry: null,
+        radius, size, speed, baseAngle, inclination, color, shots: [], emitAccumulator: 0, emitSeed: 0, batchEntry: null,
       };
       applyPlanetDrawPrefs(planet);
       return planet;
@@ -1531,7 +1530,17 @@
     }
 
     function planetWorldAt(planet, t) {
-      return new THREE.Vector3(planet.radius, 0, 0).applyEuler(new THREE.Euler(0, planet.baseAngle + t * planet.speed, planet.tilt));
+      return planetOrbitPosition(planet, t);
+    }
+
+    function planetOrbitPosition(planet, t) {
+      const angle = planet.baseAngle + t * planet.speed;
+      const z = Math.sin(angle) * planet.radius;
+      return new THREE.Vector3(
+        Math.cos(angle) * planet.radius,
+        -z * Math.sin(planet.inclination),
+        z * Math.cos(planet.inclination),
+      );
     }
 
     function startOfTodayMs(ms) {
