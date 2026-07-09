@@ -388,6 +388,7 @@
       agentCloudTargets: new Map(),
       pendingByAgent: new Map(),
       servicePendingByAgent: new Map(),
+      serviceSeeded: false,
       debugAgents: new Map(),
       serverClockOffsetMs: 0,
       serviceDay: "",
@@ -543,7 +544,6 @@
         const mount = world.clone().addScaledVector(launchDir, planet.size * 1.25);
         updateFactory(planet, mount, launchDir, t);
         updateEmissionQueue(planet, world, muzzleTipFor(planet, launchDir), launchDir, dt);
-        updateServiceEmission(planet);
         updateShots(planet, dt);
       }
     }
@@ -636,9 +636,10 @@
         state.targetClouds = Number(dyson.totals?.clouds || 0);
         state.structureBlocks = Number(dyson.totals?.structure_blocks || 0);
         state.targetFreeClouds = Number(dyson.totals?.free_clouds || 0);
-        syncSettledClouds(dyson.range?.start || dyson.day, dyson.totals?.settled_clouds, dyson.totals?.free_clouds);
+        if (syncSettledClouds(dyson.range?.start || dyson.day, dyson.totals?.settled_clouds, dyson.totals?.free_clouds)) {
+          resetServiceReplay();
+        }
         syncServicePlanets(dyson.agents || []);
-        hydrateServiceShots(dyson.agents || []);
         els.statusLine.textContent = "live " + new Date().toLocaleTimeString();
       } catch (error) {
         els.statusLine.textContent = "api error: " + (error?.message || String(error));
@@ -653,18 +654,18 @@
         state.visualClouds = settled;
         state.freeClouds = settled;
         clouds.geometry.setDrawRange(0, settled);
-        return;
+        return true;
       }
       state.serviceDay = day || "";
-      if (settled > state.visualClouds) {
+      if (settled > state.visualClouds && !hasReplayWork()) {
         state.visualClouds = settled;
         state.freeClouds = settled;
         clouds.geometry.setDrawRange(0, settled);
       }
+      return false;
     }
 
     function syncServicePlanets(serviceAgents) {
-      state.pendingByAgent.clear();
       state.servicePendingByAgent = new Map(serviceAgents.map((agent) => [agent.agent_key, Number(agent.pending_clouds || 0)]));
       const rows = serviceAgents.map((agent) => ({
         agent_key: agent.agent_key,
@@ -684,95 +685,32 @@
       syncPlanets(rows, usageByAgent);
     }
 
-    function hydrateServiceShots(serviceAgents) {
-      const byKey = new Map(serviceAgents.map((agent) => [agent.agent_key, agent]));
-      for (const [key, planet] of planets) {
-        const agent = byKey.get(key);
-        if (!agent) {
-          clearServiceShots(planet);
-          planet.serviceBatch = null;
-          planet.serviceNextCloudIndex = 0;
-          continue;
-        }
-        const batches = new Map((agent.batches || []).map((batch) => [batch.batch_id, batch]));
-        planet.serviceBatch = agent.current_batch || null;
-        planet.serviceNextCloudIndex = planet.serviceBatch ? Number(agent.emitted_clouds || 0) : 0;
-        const desired = new Map();
-        const existing = new Map();
-        for (const shot of agent.active_shots || []) {
-          if (shot.phase !== "shot") continue;
-          desired.set(serviceShotKey(shot), shot);
-        }
-        for (const shot of planet.shots) {
-          if (shot.serviceKey) existing.set(shot.serviceKey, shot);
-        }
-        for (let i = planet.shots.length - 1; i >= 0; i -= 1) {
-          const shot = planet.shots[i];
-          if (shot.serviceKey && !desired.has(shot.serviceKey)) removeShotAt(planet, i);
-        }
-        for (const shot of desired.values()) {
-          const batch = batches.get(shot.batch_id);
-          const serviceKey = serviceShotKey(shot);
-          const current = existing.get(serviceKey);
-          if (current) {
-            current.progress = Math.max(current.progress, Number(shot.progress || 0));
-            continue;
-          }
-          spawnServiceShot(planet, batch, shot);
-        }
-      }
-    }
-
-    function updateServiceEmission(planet) {
-      const batch = planet.serviceBatch;
-      if (!batch) return;
-      const startedMs = Date.parse(batch.started_at);
-      if (!Number.isFinite(startedMs)) return;
-      const nowMs = Date.now() + state.serverClockOffsetMs;
-      const targetEmitted = clamp(Math.floor(((nowMs - startedMs) / 1000) * Number(batch.emit_rate || CLOUD_EMIT_RATE)), 0, Number(batch.cloud_count || 0));
-      let next = clamp(Number(planet.serviceNextCloudIndex || 0), 0, targetEmitted);
-      while (next < targetEmitted && planet.shots.length < MAX_ACTIVE_SHOTS) {
-        const emittedMs = startedMs + (next / Number(batch.emit_rate || CLOUD_EMIT_RATE)) * 1000;
-        const ageMs = nowMs - emittedMs;
-        const serviceKey = `${batch.batch_id}:${next}`;
-        if (ageMs < SHOT_DURATION * 1000 && !planet.shots.some((shot) => shot.serviceKey === serviceKey)) {
-          spawnServiceShot(planet, batch, {
-            batch_id: batch.batch_id,
-            cloud_index: next,
-            emitted_at: new Date(emittedMs).toISOString(),
-            progress: clamp(ageMs / (SHOT_DURATION * 1000), 0, 1),
-          });
-        }
-        next += 1;
-      }
-      planet.serviceNextCloudIndex = next;
-    }
-
-    function spawnServiceShot(planet, batch, shot) {
-      if (!batch) return null;
-      const emittedMs = Date.parse(shot.emitted_at);
-      if (!Number.isFinite(emittedMs)) return null;
-      const sourceWorld = planetWorldAt(planet, serviceSecondsAt(emittedMs));
-      const entry = cloudEntryFor(sourceWorld, Number(batch.entry_seed || 0));
-      const launchDir = entryTargetFor(sourceWorld, entry).sub(sourceWorld).normalize();
-      const muzzle = sourceWorld.clone().addScaledVector(launchDir, planet.size * 1.25 + 0.42);
-      return spawnCloudShot(planet, muzzle, entry, launchDir, {
-        progress: Number(shot.progress || 0),
-        service: true,
-        serviceKey: serviceShotKey(shot),
+    function resetServiceReplay() {
+      state.pendingByAgent.clear();
+      state.agentCloudTargets.clear();
+      state.serviceSeeded = false;
+      for (const planet of planets.values()) clearPlanetShots(planet);
+      injectedClouds.splice(0).forEach((cloud) => {
+        scene.remove(cloud.mesh);
+        cloud.mesh.material.dispose();
       });
     }
 
-    function serviceShotKey(shot) {
-      return `${shot.batch_id}:${shot.cloud_index}`;
+    function hasReplayWork() {
+      for (const pending of state.pendingByAgent.values()) {
+        if (pending > 0) return true;
+      }
+      if (injectedClouds.length) return true;
+      for (const planet of planets.values()) {
+        if (planet.shots.length) return true;
+      }
+      return false;
     }
 
-    function clearServiceShots(planet) {
-      for (let i = planet.shots.length - 1; i >= 0; i -= 1) {
-        const shot = planet.shots[i];
-        if (!shot.service) continue;
-        removeShotAt(planet, i);
-      }
+    function clearPlanetShots(planet) {
+      for (let i = planet.shots.length - 1; i >= 0; i -= 1) removeShotAt(planet, i);
+      planet.batchEntry = null;
+      planet.emitAccumulator = 0;
     }
 
     function syncPlanets(agentRows, usageByAgent) {
@@ -825,8 +763,16 @@
         planet.mesh.material.color.set(statusColor(planet.status));
         planet.mesh.material.emissive.set(statusColor(planet.status));
         const nextTarget = Math.max(0, Math.floor(usageByAgent.get(key) || usageByAgent.get(row.source_agent) || 0));
+        const previousTarget = state.agentCloudTargets.get(key);
+        const replayClouds = previousTarget == null
+          ? (state.serviceSeeded ? nextTarget : 0)
+          : Math.max(0, nextTarget - previousTarget);
+        if (replayClouds > 0) {
+          state.pendingByAgent.set(key, (state.pendingByAgent.get(key) || 0) + replayClouds);
+        }
         state.agentCloudTargets.set(key, nextTarget);
       });
+      state.serviceSeeded = true;
       state.agents = rows;
       renderAgentRows();
     }
@@ -977,8 +923,6 @@
         tangent: tangentDir,
         projectile,
         trail,
-        service: Boolean(options.service),
-        serviceKey: options.serviceKey || "",
       };
       planet.shots.push(shot);
       return shot;

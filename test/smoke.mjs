@@ -401,13 +401,13 @@ try {
   assert.match(dyson, /dyson-debug/);
   assert.match(dyson, /debugStructureBtn/);
   assert.match(dyson, /\/api\/dyson\/state/);
-  assert.match(dyson, /hydrateServiceShots/);
-  assert.match(dyson, /serviceKey/);
-  assert.match(dyson, /updateServiceEmission/);
   assert.match(dyson, /buildSkySphere/);
   assert.match(dyson, /SKY_STAR_COUNT/);
   assert.match(dyson, /skySphere\.position\.copy\(camera\.position\)/);
   assert.match(dyson, /syncSettledClouds/);
+  assert.match(dyson, /resetServiceReplay/);
+  assert.match(dyson, /serviceSeeded/);
+  assert.match(dyson, /replayClouds/);
   assert.match(dyson, /color: 0xffffff/);
   assert.match(dyson, /rangeStart/);
   assert.match(dyson, /drawAtmosphere/);
