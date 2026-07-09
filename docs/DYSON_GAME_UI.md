@@ -31,7 +31,20 @@ token 只来自完成的模型请求或官方 usage 面，不从生命周期 hoo
 - 默认发射速率是 `10 clouds/s`，直到本批待发射池清空。
 - 禁止无请求时自动匀速发射。
 
-刷新页面或部署后，服务端已存储的 token、agent、状态和结构数据不能丢失。视觉上的飞行中粒子可以不恢复，但总量、游离云、结构块、agent 状态必须从服务端数据重新构建。
+刷新页面或部署后，服务端已存储的 token、agent、状态、结构和发射批次数据不能丢失。飞行中粒子不逐颗存储，但必须能从服务端批次、时间戳、速率、入口种子重新构建同一条发射链。
+
+## 服务端 Dyson 状态
+
+Dyson 画面不应该自己发明真相。客户端只渲染服务端给出的状态：
+
+- 今日总 tokens、总 Dyson clouds、free clouds、structure blocks。
+- 每个 agent 的状态机状态、累计 clouds、待发射 clouds、当前批次。
+- 当前批次的 `batch_id`、`started_at`、`cloud_count`、`emitted_clouds`、`emit_rate`、`entry_seed`、`launch_seed`。
+- 服务端当前时间 `server_now`，客户端用它重建当前已经发射到哪一颗、飞行中粒子的位置和拖尾。
+
+最小实现优先用现有 `events` + `agent_state` 计算 `GET /api/dyson/state?day=YYYY-MM-DD`，不先加后台 tick 进程。批次按 usage 事件生成：`event_id + agent_key` 决定批次 ID 和随机种子；同一 agent 的批次顺序发射，下一批等上一批按速率发完再开始。
+
+只有当需要暂停、手动重放、跨天续播或修正批次几何时，才新增持久表，例如 `dyson_batches(day, agent_key, batch_id, event_id, cloud_count, started_at, emit_rate, entry_seed, launch_seed)`。不要逐颗存粒子；粒子是 `batch + index + server_now` 的派生表现。
 
 ## 模块边界
 
@@ -220,4 +233,3 @@ Dyson UI 是 cultivagent dashboard 的一个内部游戏视图。
 
 - 刷新页面后，历史 token、cloud、structure、agent 状态从服务端恢复。
 - 刷新不应该把已统计数据清零。
-

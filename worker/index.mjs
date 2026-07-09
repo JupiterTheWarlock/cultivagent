@@ -1,4 +1,5 @@
 import { normalizeEvent, normalizeOtelLogs, normalizeOtelMetrics } from "../src/normalize.mjs";
+import { buildDysonState } from "../src/dyson-state.mjs";
 
 const COOKIE_NAME = "cultivagent_token";
 const COOKIE_MAX_AGE = 2592000;
@@ -44,6 +45,9 @@ async function handleRequest(request, env) {
   }
   if (request.method === "GET" && url.pathname === "/api/agents") {
     return json({ agents: await listAgents(env.DB) });
+  }
+  if (request.method === "GET" && url.pathname === "/api/dyson/state") {
+    return json(await listDysonState(env.DB, dysonFilters(url.searchParams)));
   }
   if (request.method === "GET" && url.pathname === "/api/request-stats") {
     return json(await listRequestStats(env.DB, statsFilters(url.searchParams)));
@@ -241,6 +245,12 @@ async function listDaily(db, day = null) {
 async function listAgents(db) {
   const { results } = await db.prepare("SELECT * FROM agent_state ORDER BY last_event_at DESC").all();
   return results.map((row) => ({ ...row, summary: JSON.parse(row.summary_json) }));
+}
+
+async function listDysonState(db, options = {}) {
+  const day = options.day || new Date().toISOString().slice(0, 10);
+  const { results } = await db.prepare("SELECT * FROM events WHERE day = ? ORDER BY occurred_at ASC").bind(day).all();
+  return buildDysonState(results.map(rowToEvent), await listAgents(db), { ...options, day });
 }
 
 async function listRequestStats(db, filters = {}) {
@@ -544,6 +554,13 @@ function eventFilters(params) {
   };
 }
 
+function dysonFilters(params) {
+  return {
+    day: dayParam(params.get("day")),
+    now: dateParam(params.get("now")),
+  };
+}
+
 async function isAuthorized(request, env) {
   if (!env.CULTIVAGENT_TOKEN) return true;
   const candidates = [];
@@ -633,6 +650,10 @@ function dateParam(value) {
   const numeric = Number(value);
   const date = Number.isFinite(numeric) ? new Date(numeric * 1000) : new Date(value);
   return Number.isFinite(date.getTime()) ? date.toISOString() : undefined;
+}
+
+function dayParam(value) {
+  return /^\d{4}-\d{2}-\d{2}$/.test(value || "") ? value : undefined;
 }
 
 function emptyToUndefined(value) {

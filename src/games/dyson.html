@@ -296,6 +296,8 @@
     const SHOT_DURATION = 8.4;
     const MAX_ACTIVE_SHOTS = 96;
     const INJECTION_DURATION = 1.2;
+    const SKY_STAR_COUNT = 1800;
+    const SKY_SPHERE_RADIUS = 720;
 
     const els = {
       scene: document.getElementById("scene"),
@@ -328,11 +330,14 @@
       structureBlocks: 0,
       visualStructureBlocks: 0,
       freeClouds: 0,
-      cloudsHydrated: false,
       agents: [],
       agentCloudTargets: new Map(),
       pendingByAgent: new Map(),
+      servicePendingByAgent: new Map(),
       debugAgents: new Map(),
+      serverClockOffsetMs: 0,
+      serviceDay: "",
+      serviceDayStartMs: 0,
       mouse: new THREE.Vector2(10, 10),
       pointer: { x: 0, y: 0 },
       hover: null,
@@ -358,6 +363,9 @@
     const camera = new THREE.PerspectiveCamera(48, window.innerWidth / window.innerHeight, 0.1, 900);
     const raycaster = new THREE.Raycaster();
     const clock = new THREE.Clock();
+
+    const skySphere = buildSkySphere(SKY_STAR_COUNT);
+    scene.add(skySphere);
 
     const root = new THREE.Group();
     scene.add(root);
@@ -428,7 +436,7 @@
 
     function animate() {
       const dt = Math.min(clock.getDelta(), 0.05);
-      const t = clock.elapsedTime;
+      const t = serviceSeconds();
       advanceCloudCount(dt);
       updateDysonShell(t);
       updatePlanets(t, dt);
@@ -471,12 +479,12 @@
         const mount = world.clone().addScaledVector(launchDir, planet.size * 1.25);
         updateFactory(planet, mount, launchDir, t);
         updateEmissionQueue(planet, world, muzzleTipFor(planet, launchDir), launchDir, dt);
+        updateServiceEmission(planet);
         updateShots(planet, dt);
       }
     }
 
     function updateCamera(t) {
-      if (!state.dragging) state.cameraYaw += 0.0005;
       const distance = state.cameraDistance;
       const pitch = THREE.MathUtils.clamp(state.cameraPitch, -0.85, 0.85);
       camera.position.set(
@@ -485,33 +493,158 @@
         Math.cos(state.cameraYaw) * Math.cos(pitch) * distance
       ).add(state.cameraTarget);
       camera.lookAt(state.cameraTarget);
+      skySphere.position.copy(camera.position);
       star.rotation.y = t * 0.09;
       corona.rotation.y = -t * 0.045;
       corona.rotation.z = t * 0.025;
     }
 
     async function refreshData() {
-      const { start, end } = todayRange();
       try {
-        const params = new URLSearchParams({ start, end });
-        const [usage, agents, events] = await Promise.all([
-          getJson("/api/usage/summary?" + params),
-          getJson("/api/agents"),
-          getJson("/api/events?" + new URLSearchParams({ start, end, limit: "20000" })),
-        ]);
-        state.targetTokens = Number(usage.summary?.real_total_tokens || 0);
-        state.targetClouds = Math.floor(state.targetTokens / TOKEN_PER_CLOUD);
-        state.structureBlocks = Math.floor(state.targetTokens / STRUCTURE_TOKEN_COST);
-        state.targetFreeClouds = Math.max(0, state.targetClouds - state.structureBlocks * STRUCTURE_CLOUD_COST);
-        if (!state.cloudsHydrated) {
-          state.visualClouds = state.targetFreeClouds;
-          state.cloudsHydrated = true;
-        }
-        const usageByAgent = usageCloudsByAgent(events.events || []);
-        syncPlanets(groupAgentRows(agents.agents || []), usageByAgent);
+        const dyson = await getJson("/api/dyson/state?" + new URLSearchParams({ day: todayDay() }));
+        const serverNowMs = Date.parse(dyson.server_now);
+        if (Number.isFinite(serverNowMs)) state.serverClockOffsetMs = serverNowMs - Date.now();
+        state.serviceDayStartMs = Date.parse(`${dyson.day}T00:00:00.000Z`) || state.serviceDayStartMs;
+        state.targetTokens = Number(dyson.totals?.tokens || 0);
+        state.targetClouds = Number(dyson.totals?.clouds || 0);
+        state.structureBlocks = Number(dyson.totals?.structure_blocks || 0);
+        state.targetFreeClouds = Number(dyson.totals?.free_clouds || 0);
+        syncSettledClouds(dyson.day, dyson.totals?.settled_clouds, dyson.totals?.free_clouds);
+        syncServicePlanets(dyson.agents || []);
+        hydrateServiceShots(dyson.agents || []);
         els.statusLine.textContent = "live " + new Date().toLocaleTimeString();
       } catch (error) {
         els.statusLine.textContent = "api error: " + (error?.message || String(error));
+      }
+    }
+
+    function syncSettledClouds(day, settledClouds, targetFreeClouds) {
+      const target = clamp(Math.floor(Number(targetFreeClouds || 0)), 0, FREE_CLOUD_MAX);
+      const settled = clamp(Math.floor(Number(settledClouds || 0)), 0, target);
+      if (state.serviceDay !== day || state.visualClouds > target) {
+        state.serviceDay = day || "";
+        state.visualClouds = settled;
+        state.freeClouds = settled;
+        clouds.geometry.setDrawRange(0, settled);
+        return;
+      }
+      state.serviceDay = day || "";
+      if (settled > state.visualClouds) {
+        state.visualClouds = settled;
+        state.freeClouds = settled;
+        clouds.geometry.setDrawRange(0, settled);
+      }
+    }
+
+    function syncServicePlanets(serviceAgents) {
+      state.pendingByAgent.clear();
+      state.servicePendingByAgent = new Map(serviceAgents.map((agent) => [agent.agent_key, Number(agent.pending_clouds || 0)]));
+      const rows = serviceAgents.map((agent) => ({
+        agent_key: agent.agent_key,
+        source_agent: agent.source_agent,
+        host_id: agent.host_id,
+        workspace_id: agent.workspace_id,
+        session_id: agent.session_id,
+        status: agent.status,
+        last_event_at: agent.current_batch?.started_at || agent.batches?.at(-1)?.started_at || new Date().toISOString(),
+        summary: agent.summary || { username: agent.source_agent, meta: { agent_status: agent.status } },
+      }));
+      const usageByAgent = new Map();
+      for (const agent of serviceAgents) {
+        usageByAgent.set(agent.agent_key, Number(agent.total_clouds || 0));
+        usageByAgent.set(agent.source_agent, Number(agent.total_clouds || 0));
+      }
+      syncPlanets(rows, usageByAgent);
+    }
+
+    function hydrateServiceShots(serviceAgents) {
+      const byKey = new Map(serviceAgents.map((agent) => [agent.agent_key, agent]));
+      for (const [key, planet] of planets) {
+        const agent = byKey.get(key);
+        if (!agent) {
+          clearServiceShots(planet);
+          planet.serviceBatch = null;
+          planet.serviceNextCloudIndex = 0;
+          continue;
+        }
+        const batches = new Map((agent.batches || []).map((batch) => [batch.batch_id, batch]));
+        planet.serviceBatch = agent.current_batch || null;
+        planet.serviceNextCloudIndex = planet.serviceBatch ? Number(agent.emitted_clouds || 0) : 0;
+        const desired = new Map();
+        const existing = new Map();
+        for (const shot of agent.active_shots || []) {
+          if (shot.phase !== "shot") continue;
+          desired.set(serviceShotKey(shot), shot);
+        }
+        for (const shot of planet.shots) {
+          if (shot.serviceKey) existing.set(shot.serviceKey, shot);
+        }
+        for (let i = planet.shots.length - 1; i >= 0; i -= 1) {
+          const shot = planet.shots[i];
+          if (shot.serviceKey && !desired.has(shot.serviceKey)) removeShotAt(planet, i);
+        }
+        for (const shot of desired.values()) {
+          const batch = batches.get(shot.batch_id);
+          const serviceKey = serviceShotKey(shot);
+          const current = existing.get(serviceKey);
+          if (current) {
+            current.progress = Math.max(current.progress, Number(shot.progress || 0));
+            continue;
+          }
+          spawnServiceShot(planet, batch, shot);
+        }
+      }
+    }
+
+    function updateServiceEmission(planet) {
+      const batch = planet.serviceBatch;
+      if (!batch) return;
+      const startedMs = Date.parse(batch.started_at);
+      if (!Number.isFinite(startedMs)) return;
+      const nowMs = Date.now() + state.serverClockOffsetMs;
+      const targetEmitted = clamp(Math.floor(((nowMs - startedMs) / 1000) * Number(batch.emit_rate || CLOUD_EMIT_RATE)), 0, Number(batch.cloud_count || 0));
+      let next = clamp(Number(planet.serviceNextCloudIndex || 0), 0, targetEmitted);
+      while (next < targetEmitted && planet.shots.length < MAX_ACTIVE_SHOTS) {
+        const emittedMs = startedMs + (next / Number(batch.emit_rate || CLOUD_EMIT_RATE)) * 1000;
+        const ageMs = nowMs - emittedMs;
+        const serviceKey = `${batch.batch_id}:${next}`;
+        if (ageMs < SHOT_DURATION * 1000 && !planet.shots.some((shot) => shot.serviceKey === serviceKey)) {
+          spawnServiceShot(planet, batch, {
+            batch_id: batch.batch_id,
+            cloud_index: next,
+            emitted_at: new Date(emittedMs).toISOString(),
+            progress: clamp(ageMs / (SHOT_DURATION * 1000), 0, 1),
+          });
+        }
+        next += 1;
+      }
+      planet.serviceNextCloudIndex = next;
+    }
+
+    function spawnServiceShot(planet, batch, shot) {
+      if (!batch) return null;
+      const emittedMs = Date.parse(shot.emitted_at);
+      if (!Number.isFinite(emittedMs)) return null;
+      const sourceWorld = planetWorldAt(planet, serviceSecondsAt(emittedMs));
+      const entry = cloudEntryFor(sourceWorld, Number(batch.entry_seed || 0));
+      const launchDir = entryTargetFor(sourceWorld, entry).sub(sourceWorld).normalize();
+      const muzzle = sourceWorld.clone().addScaledVector(launchDir, planet.size * 1.25 + 0.42);
+      return spawnCloudShot(planet, muzzle, entry, launchDir, {
+        progress: Number(shot.progress || 0),
+        service: true,
+        serviceKey: serviceShotKey(shot),
+      });
+    }
+
+    function serviceShotKey(shot) {
+      return `${shot.batch_id}:${shot.cloud_index}`;
+    }
+
+    function clearServiceShots(planet) {
+      for (let i = planet.shots.length - 1; i >= 0; i -= 1) {
+        const shot = planet.shots[i];
+        if (!shot.service) continue;
+        removeShotAt(planet, i);
       }
     }
 
@@ -560,23 +693,11 @@
         planet.status = statusOf(row);
         planet.mesh.material.color.set(statusColor(planet.status));
         planet.mesh.material.emissive.set(statusColor(planet.status));
-        const nextTarget = usageByAgent.get(key) || usageByAgent.get(row.source_agent) || 0;
+        const nextTarget = Math.max(0, Math.floor(usageByAgent.get(key) || usageByAgent.get(row.source_agent) || 0));
         state.agentCloudTargets.set(key, nextTarget);
       });
       state.agents = rows;
       renderAgentRows();
-    }
-
-    function groupAgentRows(rows) {
-      const grouped = new Map();
-      for (const row of rows) {
-        const key = row.source_agent || row.agent_key;
-        const current = grouped.get(key);
-        if (!current || String(row.last_event_at || "") > String(current.last_event_at || "")) {
-          grouped.set(key, { ...row, agent_key: key, session_id: row.session_id || "mixed" });
-        }
-      }
-      return [...grouped.values()];
     }
 
     function createPlanet(key, index) {
@@ -625,7 +746,7 @@
 
       return {
         key, index, pivot, mesh, factory, base, muzzle, statusRing,
-        radius, size, speed, baseAngle, color, shots: [], emitAccumulator: 0, emitSeed: 0, batchEntry: null,
+        radius, size, speed, baseAngle, tilt, color, shots: [], emitAccumulator: 0, emitSeed: 0, batchEntry: null,
       };
     }
 
@@ -647,7 +768,7 @@
       planet.factory.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir);
       planet.base.position.set(0, -0.2, 0);
       planet.muzzle.position.set(0, 1.15, 0);
-      const hot = (state.pendingByAgent.get(planet.key) || 0) > 0 || status === "tool_calling";
+      const hot = (state.pendingByAgent.get(planet.key) || state.servicePendingByAgent.get(planet.key) || 0) > 0 || status === "tool_calling";
       planet.muzzle.material.opacity = hot ? 0.96 : 0.55;
       planet.factory.scale.setScalar(planet.size * 0.45);
     }
@@ -673,7 +794,7 @@
       if (pending <= 0) planet.batchEntry = null;
     }
 
-    function spawnCloudShot(planet, source, entry, launchDir) {
+    function spawnCloudShot(planet, source, entry, launchDir, options = {}) {
       const color = planet.color.clone();
       const projectile = new THREE.Mesh(
         projectileGeometry,
@@ -690,15 +811,19 @@
       const shotLaunchDir = launchDir.clone().normalize();
       const target = rayEntryTarget(source, shotLaunchDir, entry.entryRadius || CLOUD_ENTRY_RADIUS);
       const tangentDir = tangentFor(target.clone().setY(0).normalize());
-      planet.shots.push({
-        progress: 0,
+      const shot = {
+        progress: Number(options.progress || 0),
         source: source.clone(),
         target: target.clone(),
         launchDir: shotLaunchDir,
         tangent: tangentDir,
         projectile,
         trail,
-      });
+        service: Boolean(options.service),
+        serviceKey: options.serviceKey || "",
+      };
+      planet.shots.push(shot);
+      return shot;
     }
 
     function muzzleTipFor(planet, launchDir) {
@@ -727,12 +852,18 @@
 
         if (shot.progress >= 1) {
           spawnInjectedCloud(shot.target, shot.tangent, planet.color);
-          scene.remove(shot.trail, shot.projectile);
-          shot.trail.material.dispose();
-          shot.projectile.material.dispose();
-          planet.shots.splice(i, 1);
+          removeShotAt(planet, i);
         }
       }
+    }
+
+    function removeShotAt(planet, index) {
+      const shot = planet.shots[index];
+      if (!shot) return;
+      scene.remove(shot.trail, shot.projectile);
+      shot.trail.material.dispose();
+      shot.projectile.material.dispose();
+      planet.shots.splice(index, 1);
     }
 
     function spawnInjectedCloud(target, tangent, color) {
@@ -905,6 +1036,10 @@
       return t * t * (3 - 2 * t);
     }
 
+    function clamp(value, min, max) {
+      return Math.max(min, Math.min(max, value));
+    }
+
     function tangentFor(radial) {
       let tangent = new THREE.Vector3().crossVectors(new THREE.Vector3(0, 1, 0), radial);
       if (tangent.lengthSq() < 0.001) tangent = new THREE.Vector3().crossVectors(new THREE.Vector3(1, 0, 0), radial);
@@ -921,19 +1056,6 @@
       mesh.position.copy(a).addScaledVector(delta, 0.5);
       mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), delta.normalize());
       mesh.scale.set(1, length, 1);
-    }
-
-    function usageCloudsByAgent(events) {
-      const map = new Map();
-      for (const event of events) {
-        const total = usageTotal(event);
-        if (!total) continue;
-        const clouds = Math.floor(total / TOKEN_PER_CLOUD);
-        const key = [event.source_agent, event.host_id, event.workspace_id, event.session_id, event.agent_id || ""].join(":");
-        map.set(key, (map.get(key) || 0) + clouds);
-        map.set(event.source_agent, (map.get(event.source_agent) || 0) + clouds);
-      }
-      return map;
     }
 
     function updateHover() {
@@ -958,7 +1080,7 @@
       }).join("<br>");
       return `<strong>恒星 / 今日系统</strong>
         <div class="mono">tokens ${nf.format(state.targetTokens)} / clouds ${nf.format(state.targetClouds)}</div>
-        <div class="mono">blocks ${nf.format(state.structureBlocks)} / free clouds ${nf.format(state.freeClouds)}</div>
+        <div class="mono">blocks ${nf.format(state.structureBlocks)} / free clouds ${nf.format(state.targetFreeClouds)} / settled ${nf.format(state.freeClouds)}</div>
         <div style="margin-top:7px">${rows || '<span class="mono">no agents</span>'}</div>`;
     }
 
@@ -977,7 +1099,7 @@
       els.tokenValue.textContent = short.format(state.targetTokens);
       els.cloudValue.textContent = short.format(state.targetClouds);
       els.shellValue.textContent = short.format(state.structureBlocks + (state.visualStructureBlocks || 0));
-      els.freeValue.textContent = short.format(state.freeClouds);
+      els.freeValue.textContent = short.format(state.targetFreeClouds);
       els.clockLine.textContent = `1 cloud = ${TOKEN_PER_CLOUD} tokens / 1 block = 1000万 tokens`;
     }
 
@@ -1086,6 +1208,50 @@
       geometry.setAttribute("position", attr);
       geometry.computeBoundingSphere();
       return geometry;
+    }
+
+    function buildSkySphere(count) {
+      const group = new THREE.Group();
+      const shell = new THREE.Mesh(
+        new THREE.SphereGeometry(SKY_SPHERE_RADIUS, 48, 24),
+        new THREE.MeshBasicMaterial({
+          color: 0x02040a,
+          side: THREE.BackSide,
+          depthWrite: false,
+          fog: false,
+        })
+      );
+      shell.renderOrder = -100;
+      group.add(shell);
+
+      const positions = new Float32Array(count * 3);
+      for (let i = 0; i < count; i += 1) {
+        const radius = SKY_SPHERE_RADIUS * (0.94 + random01(i * 7 + 1) * 0.04);
+        const theta = random01(i * 7 + 2) * Math.PI * 2;
+        const z = random01(i * 7 + 3) * 2 - 1;
+        const band = Math.sqrt(Math.max(0, 1 - z * z));
+        positions[i * 3] = Math.cos(theta) * band * radius;
+        positions[i * 3 + 1] = z * radius * 0.78;
+        positions[i * 3 + 2] = Math.sin(theta) * band * radius;
+      }
+      const geometry = new THREE.BufferGeometry();
+      geometry.setAttribute("position", new THREE.BufferAttribute(positions, 3));
+      geometry.computeBoundingSphere();
+      const material = new THREE.PointsMaterial({
+        color: 0xffffff,
+        size: 0.82,
+        sizeAttenuation: true,
+        transparent: true,
+        opacity: 0.78,
+        depthWrite: false,
+        fog: false,
+        blending: THREE.AdditiveBlending,
+      });
+      const points = new THREE.Points(geometry, material);
+      points.frustumCulled = false;
+      points.renderOrder = -99;
+      group.add(points);
+      return group;
     }
 
     function buildSoccerShell(radius) {
@@ -1224,11 +1390,6 @@
       shell.outlines.geometry.setDrawRange(0, outlines);
     }
 
-    function usageTotal(event) {
-      const u = event.usage || {};
-      return Number(u.input_tokens || 0) + Number(u.output_tokens || 0) + Number(u.cache_read_tokens || 0) + Number(u.cache_write_tokens || 0);
-    }
-
     function statusOf(row) {
       return row.summary?.meta?.agent_status || row.status || "idle";
     }
@@ -1246,10 +1407,21 @@
       return row.summary?.username || row.summary?.meta?.username || row.host_id || row.source_agent || "agent";
     }
 
-    function todayRange() {
-      const start = new Date();
-      start.setHours(0, 0, 0, 0);
-      return { start: start.toISOString(), end: new Date().toISOString() };
+    function serviceSeconds() {
+      if (!state.serviceDayStartMs) return clock.elapsedTime;
+      return serviceSecondsAt(Date.now() + state.serverClockOffsetMs);
+    }
+
+    function serviceSecondsAt(ms) {
+      return Math.max(0, (ms - (state.serviceDayStartMs || ms)) / 1000);
+    }
+
+    function planetWorldAt(planet, t) {
+      return new THREE.Vector3(planet.radius, 0, 0).applyEuler(new THREE.Euler(0, planet.baseAngle + t * planet.speed, planet.tilt));
+    }
+
+    function todayDay() {
+      return new Date().toISOString().slice(0, 10);
     }
 
     async function getJson(url) {

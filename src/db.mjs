@@ -1,6 +1,7 @@
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { buildDysonState } from "./dyson-state.mjs";
 
 export function openDatabase(dbPath) {
   mkdirSync(dirname(dbPath), { recursive: true });
@@ -141,6 +142,12 @@ export function listAgents(db) {
     ...row,
     summary: JSON.parse(row.summary_json),
   }));
+}
+
+export function listDysonState(db, options = {}) {
+  const day = options.day || new Date().toISOString().slice(0, 10);
+  const events = db.prepare("SELECT * FROM events WHERE day = ? ORDER BY occurred_at ASC").all(day).map(rowToEvent);
+  return buildDysonState(events, listAgents(db), { ...options, day });
 }
 
 export function listRequestStats(db, filters = {}) {

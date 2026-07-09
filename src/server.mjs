@@ -6,6 +6,7 @@ import {
   insertEvent,
   listAgents,
   listDaily,
+  listDysonState,
   listEvents,
   listRequestStats,
   listUsageLogs,
@@ -53,6 +54,9 @@ export function createCultivagentServer(options = {}) {
         return json(res, 200, { daily: listDaily(db, url.searchParams.get("day")) });
       }
       if (req.method === "GET" && url.pathname === "/api/agents") return json(res, 200, { agents: listAgents(db) });
+      if (req.method === "GET" && url.pathname === "/api/dyson/state") {
+        return json(res, 200, listDysonState(db, dysonFilters(url.searchParams)));
+      }
       if (req.method === "GET" && url.pathname === "/api/request-stats") {
         return json(res, 200, listRequestStats(db, statsFilters(url.searchParams)));
       }
@@ -168,6 +172,13 @@ function eventFilters(params) {
   };
 }
 
+function dysonFilters(params) {
+  return {
+    day: dayParam(params.get("day")),
+    now: dateParam(params.get("now")),
+  };
+}
+
 function dateParam(value) {
   if (!value) return undefined;
   const numeric = Number(value);
@@ -207,6 +218,10 @@ function html(res, body) {
 
 function dashboardHtml() {
   return readFileSync(new URL("./dashboard.html", import.meta.url), "utf8");
+}
+
+function dayParam(value) {
+  return /^\d{4}-\d{2}-\d{2}$/.test(value || "") ? value : undefined;
 }
 
 function dysonHtml() {
