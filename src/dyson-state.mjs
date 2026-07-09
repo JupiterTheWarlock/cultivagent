@@ -9,22 +9,31 @@ export const DYSON_CONSTANTS = {
 
 export function buildDysonState(events, agents = [], options = {}) {
   const nowMs = dateMs(options.now) ?? Date.now();
-  const day = options.day || new Date(nowMs).toISOString().slice(0, 10);
+  const startMs = dateMs(options.start);
+  const endMs = dateMs(options.end);
+  const hasRange = startMs != null || endMs != null;
+  const day = options.day || new Date(startMs ?? nowMs).toISOString().slice(0, 10);
   const constants = { ...DYSON_CONSTANTS };
-  const agentRows = new Map(agents.map((agent) => [agent.agent_key, agent]));
+  const agentRows = new Map();
+  for (const agent of agents) {
+    const key = agentKey(agent);
+    if (!agentRows.has(key)) agentRows.set(key, agent);
+  }
   const grouped = new Map();
   const dayEvents = events
-    .filter((event) => event.day === day && usageTotal(event) > 0 && event.meta?.accounting !== false)
+    .filter((event) => {
+      const ms = dateMs(event.occurred_at);
+      const inRange = hasRange
+        ? ms != null && (startMs == null || ms >= startMs) && (endMs == null || ms <= endMs)
+        : event.day === day;
+      return inRange && usageTotal(event) > 0 && event.meta?.accounting !== false;
+    })
     .sort((a, b) => a.occurred_at.localeCompare(b.occurred_at));
 
   for (const event of dayEvents) {
     const key = agentKey(event);
     if (!grouped.has(key)) grouped.set(key, []);
     grouped.get(key).push(event);
-  }
-  for (const agent of agents) {
-    if (String(agent.last_event_at || "").slice(0, 10) !== day) continue;
-    if (!grouped.has(agent.agent_key)) grouped.set(agent.agent_key, []);
   }
 
   const stateAgents = [...grouped.entries()].map(([key, rows]) => buildAgentState(key, rows, agentRows.get(key), nowMs, constants));
@@ -41,6 +50,10 @@ export function buildDysonState(events, agents = [], options = {}) {
 
   return {
     day,
+    range: {
+      start: new Date(startMs ?? Date.parse(`${day}T00:00:00.000Z`)).toISOString(),
+      end: new Date(endMs ?? Date.parse(`${day}T23:59:59.999Z`)).toISOString(),
+    },
     server_now: new Date(nowMs).toISOString(),
     constants,
     totals,
@@ -134,7 +147,7 @@ function batchState(batch, nowMs, constants) {
 }
 
 function agentKey(event) {
-  return [event.source_agent, event.host_id, event.workspace_id, event.session_id, event.agent_id || ""].join(":");
+  return [event.source_agent, event.host_id].join(":");
 }
 
 function usageTotal(event) {

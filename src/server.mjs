@@ -175,6 +175,8 @@ function eventFilters(params) {
 function dysonFilters(params) {
   return {
     day: dayParam(params.get("day")),
+    start: dateParam(params.get("start")),
+    end: dateParam(params.get("end")),
     now: dateParam(params.get("now")),
   };
 }

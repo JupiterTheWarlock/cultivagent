@@ -409,6 +409,10 @@ try {
   assert.match(dyson, /skySphere\.position\.copy\(camera\.position\)/);
   assert.match(dyson, /syncSettledClouds/);
   assert.match(dyson, /color: 0xffffff/);
+  assert.match(dyson, /rangeStart/);
+  assert.match(dyson, /drawAtmosphere/);
+  assert.match(dyson, /buildOrbitGeometry/);
+  assert.match(dyson, /STAR_LIGHT_BASE/);
   assert.doesNotMatch(dyson, /serviceShotSignature/);
   assert.doesNotMatch(dyson, /state\.visualClouds = Math\.max\(0, Math\.min\(FREE_CLOUD_MAX, Number\(dyson\.totals\?\.settled_clouds/);
   assert.doesNotMatch(dyson, /state\.cameraYaw \+= 0\.0005/);
@@ -441,12 +445,13 @@ try {
   assert.equal(dysonState.totals.clouds, 100);
   assert.equal(dysonState.totals.free_clouds, 100);
   assert.equal(dysonState.totals.settled_clouds, 0);
-  assert.equal(dysonState.agents.length, 2);
+  assert.equal(dysonState.agents.length, 1);
   const launchingAgent = dysonState.agents.find((agent) => agent.source_agent === "codex");
+  assert.equal(launchingAgent.agent_key, "codex:dyson-host");
   assert.equal(launchingAgent.total_clouds, 100);
   assert.equal(launchingAgent.emitted_clouds, 50);
   assert.equal(launchingAgent.pending_clouds, 50);
-  assert.equal(launchingAgent.current_batch.batch_id, "dyson-launch-1:codex:dyson-host:dyson-workspace:dyson-session:");
+  assert.equal(launchingAgent.current_batch.batch_id, "dyson-launch-1:codex:dyson-host");
   assert.equal(launchingAgent.current_batch.entry_seed, launchingAgent.batches[0].entry_seed);
   assert.equal(launchingAgent.active_shots.length, 50);
   assert.equal(launchingAgent.active_shots[0].cloud_index, 0);
@@ -457,15 +462,36 @@ try {
   assert.equal(nearRingAgent.active_shots[0].cloud_index, 1);
   assert.equal(nearRingAgent.active_shots.some((shot) => shot.phase !== "shot"), false);
   const statusOnlyAgent = dysonState.agents.find((agent) => agent.source_agent === "opencode");
-  assert.equal(statusOnlyAgent.status, "tool_calling");
-  assert.equal(statusOnlyAgent.total_clouds, 0);
+  assert.equal(statusOnlyAgent, undefined);
+  const dysonStatusOnlyRange = await get(`${base}/api/dyson/state?start=2026-07-02T00:00:01.500Z&end=2026-07-02T00:00:02.500Z&now=2026-07-02T00:00:05.000Z`);
+  assert.equal(dysonStatusOnlyRange.totals.tokens, 0);
+  assert.equal(dysonStatusOnlyRange.agents.length, 0);
   const dysonAfterRefresh = await get(`${base}/api/dyson/state?day=2026-07-02&now=2026-07-02T00:00:05.000Z`);
   const launchingAfterRefresh = dysonAfterRefresh.agents.find((agent) => agent.source_agent === "codex");
   assert.deepEqual(launchingAfterRefresh.current_batch, launchingAgent.current_batch);
   assert.deepEqual(launchingAfterRefresh.active_shots, launchingAgent.active_shots);
+  await post(`${base}/ingest`, {
+    event_id: "dyson-launch-model-2",
+    source_agent: "codex",
+    source_surface: "test",
+    event_type: "model_response",
+    occurred_at: "2026-07-02T00:00:01.000Z",
+    host_id: "dyson-host",
+    workspace_id: "dyson-workspace-2",
+    session_id: "dyson-session-2",
+    model: "gpt-dyson-other",
+    usage: { input_tokens: 100 },
+    meta: { machine_name: "dyson-machine", agent_status: "done" },
+  });
+  const dysonGrouped = await get(`${base}/api/dyson/state?day=2026-07-02&now=2026-07-02T00:00:05.000Z`);
+  assert.equal(dysonGrouped.totals.tokens, 10100);
+  assert.equal(dysonGrouped.agents.length, 1);
+  assert.equal(dysonGrouped.agents[0].agent_key, "codex:dyson-host");
+  assert.equal(dysonGrouped.agents[0].total_clouds, 101);
   const workerSource = readFileSync(new URL("../worker/index.mjs", import.meta.url), "utf8");
   assert.match(workerSource, /cache-control", "no-store"/);
   assert.match(workerSource, /assetRequest\(request, "\/dyson"\)/);
+  assert.match(workerSource, /start: dateParam\(params\.get\("start"\)\)/);
 
   const events = await get(`${base}/api/events?limit=20`);
   const otelEvent = events.events.find((x) => x.source_surface === "otel" && x.source_agent === "claude-code");

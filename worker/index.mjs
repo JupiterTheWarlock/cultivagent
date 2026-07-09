@@ -248,8 +248,23 @@ async function listAgents(db) {
 }
 
 async function listDysonState(db, options = {}) {
-  const day = options.day || new Date().toISOString().slice(0, 10);
-  const { results } = await db.prepare("SELECT * FROM events WHERE day = ? ORDER BY occurred_at ASC").bind(day).all();
+  const day = options.day || new Date(Date.parse(options.start) || Date.now()).toISOString().slice(0, 10);
+  const conditions = [];
+  const params = [];
+  if (options.start || options.end) {
+    if (options.start) {
+      conditions.push("occurred_at >= ?");
+      params.push(options.start);
+    }
+    if (options.end) {
+      conditions.push("occurred_at <= ?");
+      params.push(options.end);
+    }
+  } else {
+    conditions.push("day = ?");
+    params.push(day);
+  }
+  const { results } = await db.prepare(`SELECT * FROM events WHERE ${conditions.join(" AND ")} ORDER BY occurred_at ASC`).bind(...params).all();
   return buildDysonState(results.map(rowToEvent), await listAgents(db), { ...options, day });
 }
 
@@ -557,6 +572,8 @@ function eventFilters(params) {
 function dysonFilters(params) {
   return {
     day: dayParam(params.get("day")),
+    start: dateParam(params.get("start")),
+    end: dateParam(params.get("end")),
     now: dateParam(params.get("now")),
   };
 }

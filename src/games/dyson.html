@@ -37,7 +37,7 @@
       gap: 14px;
       pointer-events: none;
     }
-    .brand, .metrics, .agents, .tooltip {
+    .brand, .metrics, .agents, .debug, .prefs, .tooltip {
       border: 1px solid var(--line);
       background: var(--panel);
       backdrop-filter: blur(12px);
@@ -110,20 +110,20 @@
       padding: 10px;
       pointer-events: auto;
     }
-    .debug {
+    .left-tools {
       position: fixed;
       left: 18px;
       bottom: 18px;
       width: min(380px, calc(100vw - 36px));
-      border: 1px solid var(--line);
-      background: var(--panel);
-      backdrop-filter: blur(12px);
+      display: grid;
+      gap: 10px;
+      pointer-events: auto;
+    }
+    .debug, .prefs {
       border-radius: 8px;
       padding: 10px;
-      pointer-events: auto;
-      box-shadow: 0 18px 48px rgba(0, 0, 0, 0.28);
     }
-    .debug-head {
+    .debug-head, .prefs summary {
       display: flex;
       justify-content: space-between;
       align-items: center;
@@ -131,8 +131,16 @@
       font-size: 11px;
       margin-bottom: 8px;
     }
+    .prefs summary {
+      cursor: pointer;
+      font-weight: 700;
+      list-style: none;
+    }
+    .prefs summary::-webkit-details-marker { display: none; }
     .debug-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
-    .debug select, .debug input, .debug button {
+    .prefs-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    .debug select, .debug input, .debug button,
+    .prefs input, .prefs button {
       width: 100%;
       min-width: 0;
       height: 30px;
@@ -144,8 +152,26 @@
       font-size: 12px;
       font-weight: 700;
     }
-    .debug button { cursor: pointer; }
-    .debug button:hover { border-color: rgba(238, 246, 255, 0.42); background: rgba(255, 255, 255, 0.08); }
+    .debug button, .prefs button { cursor: pointer; }
+    .debug button:hover, .prefs button:hover { border-color: rgba(238, 246, 255, 0.42); background: rgba(255, 255, 255, 0.08); }
+    .check-row, .range-row {
+      min-height: 30px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      border: 1px solid rgba(145, 164, 184, 0.16);
+      border-radius: 7px;
+      padding: 0 8px;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 700;
+      background: rgba(255, 255, 255, 0.035);
+    }
+    .check-row input { width: 16px; height: 16px; padding: 0; }
+    .range-row { grid-column: 1 / -1; }
+    .range-row input { flex: 1; height: 24px; padding: 0; }
+    .range-row output { min-width: 48px; text-align: right; color: var(--fg); font: 11px/1 ui-monospace, SFMono-Regular, Consolas, monospace; }
     .debug-log {
       min-height: 16px;
       margin-top: 8px;
@@ -227,7 +253,7 @@
       .brand { width: 100%; }
       .metrics { width: 100%; grid-template-columns: repeat(2, minmax(0, 1fr)); }
       .agents { left: 12px; right: 12px; bottom: 12px; width: auto; max-height: 34vh; }
-      .debug { left: 12px; right: 12px; bottom: calc(34vh + 24px); width: auto; }
+      .left-tools { left: 12px; right: 12px; top: 254px; bottom: calc(34vh + 24px); width: auto; overflow: auto; }
       .status { left: 12px; bottom: calc(34vh + 24px); max-width: calc(100vw - 24px); }
     }
   </style>
@@ -256,26 +282,42 @@
     <div class="agents-head"><span>AGENTS</span><span id="agentCount">0</span></div>
     <div id="agentRows"></div>
   </section>
-  <section class="debug" aria-label="Dyson debug tools">
-    <div class="debug-head"><span>DEBUG · 仅视觉</span><span id="statusLine">connecting</span></div>
-    <div class="debug-grid">
-      <select id="debugAgent" aria-label="Debug agent"></select>
-      <input id="debugTokens" aria-label="Debug tokens" type="number" min="100" step="100" value="10000">
-      <select id="debugStatus" aria-label="Debug status">
-        <option value="thinking">thinking</option>
-        <option value="streaming">streaming</option>
-        <option value="tool_calling">tool_calling</option>
-        <option value="waiting_approval">waiting_approval</option>
-        <option value="done">done</option>
-        <option value="error">error</option>
-      </select>
-      <button type="button" id="debugStatusBtn">状态机</button>
-      <button type="button" id="debugBeamBtn">发射云</button>
-      <button type="button" id="debugStructureBtn">凝结结构</button>
-      <button type="button" id="debugRefreshBtn">刷新</button>
-    </div>
-    <div class="debug-log" id="debugLog">visual only · 不写入数据</div>
-  </section>
+  <div class="left-tools">
+    <details class="prefs" aria-label="Dyson draw preferences" open>
+      <summary><span>绘制偏好</span><span id="statusLine">connecting</span></summary>
+      <div class="prefs-grid">
+        <input id="rangeStart" aria-label="开始时间" type="datetime-local">
+        <input id="rangeEnd" aria-label="结束时间" type="datetime-local">
+        <button type="button" id="rangeTodayBtn">今天</button>
+        <button type="button" id="rangeApplyBtn">应用范围</button>
+        <label class="check-row"><span>大气层</span><input id="drawAtmosphere" type="checkbox" checked></label>
+        <label class="check-row"><span>炮塔</span><input id="drawTurrets" type="checkbox" checked></label>
+        <label class="check-row"><span>公转轨道</span><input id="drawOrbits" type="checkbox" checked></label>
+        <label class="range-row"><span>景深雾</span><input id="drawFog" type="range" min="0" max="0.015" step="0.001" value="0.006"><output id="drawFogValue">0.006</output></label>
+        <label class="range-row"><span>恒星亮度</span><input id="drawStarBrightness" type="range" min="0.4" max="2.4" step="0.1" value="1"><output id="drawStarValue">1.0x</output></label>
+      </div>
+    </details>
+    <section class="debug" aria-label="Dyson debug tools">
+      <div class="debug-head"><span>DEBUG · 仅视觉</span><span>visual only</span></div>
+      <div class="debug-grid">
+        <select id="debugAgent" aria-label="Debug agent"></select>
+        <input id="debugTokens" aria-label="Debug tokens" type="number" min="100" step="100" value="10000">
+        <select id="debugStatus" aria-label="Debug status">
+          <option value="thinking">thinking</option>
+          <option value="streaming">streaming</option>
+          <option value="tool_calling">tool_calling</option>
+          <option value="waiting_approval">waiting_approval</option>
+          <option value="done">done</option>
+          <option value="error">error</option>
+        </select>
+        <button type="button" id="debugStatusBtn">状态机</button>
+        <button type="button" id="debugBeamBtn">发射云</button>
+        <button type="button" id="debugStructureBtn">凝结结构</button>
+        <button type="button" id="debugRefreshBtn">刷新</button>
+      </div>
+      <div class="debug-log" id="debugLog">visual only · 不写入数据</div>
+    </section>
+  </div>
   <div class="tooltip" id="tooltip"></div>
 
   <script type="module">
@@ -298,6 +340,7 @@
     const INJECTION_DURATION = 1.2;
     const SKY_STAR_COUNT = 1800;
     const SKY_SPHERE_RADIUS = 720;
+    const STAR_LIGHT_BASE = 1200;
 
     const els = {
       scene: document.getElementById("scene"),
@@ -309,6 +352,17 @@
       agentCount: document.getElementById("agentCount"),
       agentRows: document.getElementById("agentRows"),
       statusLine: document.getElementById("statusLine"),
+      rangeStart: document.getElementById("rangeStart"),
+      rangeEnd: document.getElementById("rangeEnd"),
+      rangeTodayBtn: document.getElementById("rangeTodayBtn"),
+      rangeApplyBtn: document.getElementById("rangeApplyBtn"),
+      drawAtmosphere: document.getElementById("drawAtmosphere"),
+      drawTurrets: document.getElementById("drawTurrets"),
+      drawOrbits: document.getElementById("drawOrbits"),
+      drawFog: document.getElementById("drawFog"),
+      drawFogValue: document.getElementById("drawFogValue"),
+      drawStarBrightness: document.getElementById("drawStarBrightness"),
+      drawStarValue: document.getElementById("drawStarValue"),
       debugAgent: document.getElementById("debugAgent"),
       debugTokens: document.getElementById("debugTokens"),
       debugStatus: document.getElementById("debugStatus"),
@@ -348,6 +402,8 @@
       cameraDistance: 150,
       cameraTarget: new THREE.Vector3(0, 0, 0),
       lastPointer: { x: 0, y: 0 },
+      range: { liveToday: true, startMs: 0, endMs: 0 },
+      draw: { atmosphere: true, turrets: true, orbits: true, fogDensity: 0.006, starBrightness: 1 },
     };
 
     const renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: "high-performance" });
@@ -370,7 +426,7 @@
     const root = new THREE.Group();
     scene.add(root);
     scene.add(new THREE.AmbientLight(0x9ab4ff, 0.34));
-    const starLight = new THREE.PointLight(0xffcc77, 1200, 360, 1.7);
+    const starLight = new THREE.PointLight(0xffcc77, STAR_LIGHT_BASE, 360, 1.7);
     scene.add(starLight);
 
     const star = new THREE.Mesh(
@@ -416,6 +472,7 @@
     const injectedCloudGeometry = new THREE.SphereGeometry(0.18, 8, 6);
     const muzzleGeometry = new THREE.CylinderGeometry(0.8, 1.05, 2.4, 12);
     const ringGeometry = new THREE.TorusGeometry(1, 0.04, 8, 48);
+    const atmosphereGeometry = new THREE.SphereGeometry(1, 24, 16);
     const injectedClouds = [];
 
     renderer.setAnimationLoop(animate);
@@ -427,10 +484,17 @@
     window.addEventListener("wheel", onWheel, { passive: false });
     window.addEventListener("contextmenu", (event) => event.preventDefault());
     window.addEventListener("dblclick", resetCamera);
+    els.rangeTodayBtn.addEventListener("click", useTodayRange);
+    els.rangeApplyBtn.addEventListener("click", applyRange);
+    for (const input of [els.drawAtmosphere, els.drawTurrets, els.drawOrbits, els.drawFog, els.drawStarBrightness]) {
+      input.addEventListener("input", readDrawPrefs);
+    }
     els.debugStructureBtn.addEventListener("click", postDebugStructure);
     els.debugStatusBtn.addEventListener("click", postDebugStatus);
     els.debugBeamBtn.addEventListener("click", fireDebugBeam);
     els.debugRefreshBtn.addEventListener("click", refreshData);
+    initRangeControls();
+    readDrawPrefs();
     refreshData();
     setInterval(refreshData, FETCH_INTERVAL_MS);
 
@@ -499,17 +563,80 @@
       corona.rotation.z = t * 0.025;
     }
 
+    function initRangeControls() {
+      const now = Date.now();
+      state.range.startMs = startOfTodayMs(now);
+      state.range.endMs = now;
+      renderRangeControls();
+    }
+
+    function renderRangeControls() {
+      els.rangeStart.value = toLocalInputValue(state.range.startMs);
+      els.rangeEnd.value = toLocalInputValue(state.range.liveToday ? Date.now() : state.range.endMs);
+    }
+
+    function useTodayRange() {
+      state.range.liveToday = true;
+      initRangeControls();
+      refreshData();
+    }
+
+    function applyRange() {
+      const start = parseLocalInputValue(els.rangeStart.value) ?? startOfTodayMs(Date.now());
+      const end = parseLocalInputValue(els.rangeEnd.value) ?? Date.now();
+      state.range.liveToday = false;
+      state.range.startMs = Math.min(start, end);
+      state.range.endMs = Math.max(start, end);
+      renderRangeControls();
+      refreshData();
+    }
+
+    function dysonParams() {
+      const now = Date.now();
+      const startMs = state.range.liveToday ? startOfTodayMs(now) : state.range.startMs;
+      const endMs = state.range.liveToday ? now : state.range.endMs;
+      return new URLSearchParams({
+        start: String(Math.floor(startMs / 1000)),
+        end: String(Math.floor(endMs / 1000)),
+      });
+    }
+
+    function readDrawPrefs() {
+      state.draw.atmosphere = els.drawAtmosphere.checked;
+      state.draw.turrets = els.drawTurrets.checked;
+      state.draw.orbits = els.drawOrbits.checked;
+      state.draw.fogDensity = Number(els.drawFog.value) || 0;
+      state.draw.starBrightness = Number(els.drawStarBrightness.value) || 1;
+      applyDrawPrefs();
+    }
+
+    function applyDrawPrefs() {
+      scene.fog.density = state.draw.fogDensity;
+      starLight.intensity = STAR_LIGHT_BASE * state.draw.starBrightness;
+      corona.material.opacity = 0.05 + state.draw.starBrightness * 0.07;
+      els.drawFogValue.textContent = state.draw.fogDensity.toFixed(3);
+      els.drawStarValue.textContent = state.draw.starBrightness.toFixed(1) + "x";
+      for (const planet of planets.values()) applyPlanetDrawPrefs(planet);
+    }
+
+    function applyPlanetDrawPrefs(planet) {
+      planet.atmosphere.visible = state.draw.atmosphere;
+      planet.factory.visible = state.draw.turrets;
+      planet.orbit.visible = state.draw.orbits;
+    }
+
     async function refreshData() {
       try {
-        const dyson = await getJson("/api/dyson/state?" + new URLSearchParams({ day: todayDay() }));
+        if (state.range.liveToday) renderRangeControls();
+        const dyson = await getJson("/api/dyson/state?" + dysonParams());
         const serverNowMs = Date.parse(dyson.server_now);
         if (Number.isFinite(serverNowMs)) state.serverClockOffsetMs = serverNowMs - Date.now();
-        state.serviceDayStartMs = Date.parse(`${dyson.day}T00:00:00.000Z`) || state.serviceDayStartMs;
+        state.serviceDayStartMs = Date.parse(dyson.range?.start) || Date.parse(`${dyson.day}T00:00:00.000Z`) || state.serviceDayStartMs;
         state.targetTokens = Number(dyson.totals?.tokens || 0);
         state.targetClouds = Number(dyson.totals?.clouds || 0);
         state.structureBlocks = Number(dyson.totals?.structure_blocks || 0);
         state.targetFreeClouds = Number(dyson.totals?.free_clouds || 0);
-        syncSettledClouds(dyson.day, dyson.totals?.settled_clouds, dyson.totals?.free_clouds);
+        syncSettledClouds(dyson.range?.start || dyson.day, dyson.totals?.settled_clouds, dyson.totals?.free_clouds);
         syncServicePlanets(dyson.agents || []);
         hydrateServiceShots(dyson.agents || []);
         els.statusLine.textContent = "live " + new Date().toLocaleTimeString();
@@ -668,8 +795,12 @@
       for (const [key, planet] of planets) {
         if (nextKeys.has(key)) continue;
         root.remove(planet.pivot);
+        root.remove(planet.orbit);
         scene.remove(planet.factory);
         scene.remove(planet.statusRing);
+        planet.orbit.geometry.dispose();
+        planet.orbit.material.dispose();
+        planet.atmosphere.material.dispose();
         for (const shot of planet.shots) {
           scene.remove(shot.trail);
           scene.remove(shot.projectile);
@@ -726,6 +857,26 @@
       mesh.userData.key = key;
       pivot.add(mesh);
 
+      const atmosphere = new THREE.Mesh(
+        atmosphereGeometry,
+        new THREE.MeshBasicMaterial({
+          color,
+          transparent: true,
+          opacity: 0.16,
+          depthWrite: false,
+          blending: THREE.AdditiveBlending,
+        })
+      );
+      atmosphere.scale.setScalar(size * 1.28);
+      mesh.add(atmosphere);
+
+      const orbit = new THREE.LineLoop(
+        buildOrbitGeometry(radius),
+        new THREE.LineBasicMaterial({ color: 0x7fb8ff, transparent: true, opacity: 0.2, depthWrite: false })
+      );
+      orbit.rotation.z = tilt;
+      root.add(orbit);
+
       const factory = new THREE.Group();
       const base = new THREE.Mesh(
         new THREE.BoxGeometry(1.8, 1.0, 1.2),
@@ -744,10 +895,12 @@
       );
       scene.add(statusRing);
 
-      return {
-        key, index, pivot, mesh, factory, base, muzzle, statusRing,
+      const planet = {
+        key, index, pivot, mesh, atmosphere, orbit, factory, base, muzzle, statusRing,
         radius, size, speed, baseAngle, tilt, color, shots: [], emitAccumulator: 0, emitSeed: 0, batchEntry: null,
       };
+      applyPlanetDrawPrefs(planet);
+      return planet;
     }
 
     function updateFactory(planet, source, launchDir, t) {
@@ -757,8 +910,13 @@
       planet.base.material.color.copy(color);
       planet.muzzle.material.color.copy(color);
       planet.statusRing.material.color.copy(color);
+      planet.atmosphere.material.color.copy(color);
+      planet.orbit.material.color.copy(color);
+      applyPlanetDrawPrefs(planet);
       const pulse = status === "idle" || status === "done" ? 0.12 : 0.34 + Math.sin(t * 5) * 0.12;
       planet.statusRing.material.opacity = pulse;
+      planet.atmosphere.material.opacity = state.draw.atmosphere ? 0.12 + pulse * 0.18 : 0;
+      planet.orbit.material.opacity = state.draw.orbits ? 0.16 : 0;
       planet.statusRing.position.copy(planet.mesh.getWorldPosition(new THREE.Vector3()));
       planet.statusRing.scale.setScalar(planet.size * 1.65);
       planet.statusRing.quaternion.copy(camera.quaternion);
@@ -1189,6 +1347,18 @@
       els.debugLog.textContent = `visual beam: ${agent} +${nf.format(queued)} clouds @ ${CLOUD_EMIT_RATE}/s`;
     }
 
+    function buildOrbitGeometry(radius) {
+      const points = [];
+      for (let i = 0; i < 160; i += 1) {
+        const angle = (i / 160) * Math.PI * 2;
+        points.push(Math.cos(angle) * radius, 0, Math.sin(angle) * radius);
+      }
+      const geometry = new THREE.BufferGeometry();
+      geometry.setAttribute("position", new THREE.Float32BufferAttribute(points, 3));
+      geometry.computeBoundingSphere();
+      return geometry;
+    }
+
     function buildCloudGeometry(count) {
       const positions = new Float32Array(count * 3);
       for (let i = 0; i < count; i += 1) {
@@ -1420,8 +1590,21 @@
       return new THREE.Vector3(planet.radius, 0, 0).applyEuler(new THREE.Euler(0, planet.baseAngle + t * planet.speed, planet.tilt));
     }
 
-    function todayDay() {
-      return new Date().toISOString().slice(0, 10);
+    function startOfTodayMs(ms) {
+      const date = new Date(ms);
+      date.setHours(0, 0, 0, 0);
+      return date.getTime();
+    }
+
+    function toLocalInputValue(ms) {
+      const date = new Date(ms);
+      const pad = (value) => String(value).padStart(2, "0");
+      return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+    }
+
+    function parseLocalInputValue(value) {
+      const ms = Date.parse(value || "");
+      return Number.isFinite(ms) ? ms : null;
     }
 
     async function getJson(url) {

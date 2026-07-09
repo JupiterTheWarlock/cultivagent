@@ -145,8 +145,23 @@ export function listAgents(db) {
 }
 
 export function listDysonState(db, options = {}) {
-  const day = options.day || new Date().toISOString().slice(0, 10);
-  const events = db.prepare("SELECT * FROM events WHERE day = ? ORDER BY occurred_at ASC").all(day).map(rowToEvent);
+  const day = options.day || new Date(Date.parse(options.start) || Date.now()).toISOString().slice(0, 10);
+  const conditions = [];
+  const params = [];
+  if (options.start || options.end) {
+    if (options.start) {
+      conditions.push("occurred_at >= ?");
+      params.push(options.start);
+    }
+    if (options.end) {
+      conditions.push("occurred_at <= ?");
+      params.push(options.end);
+    }
+  } else {
+    conditions.push("day = ?");
+    params.push(day);
+  }
+  const events = db.prepare(`SELECT * FROM events WHERE ${conditions.join(" AND ")} ORDER BY occurred_at ASC`).all(...params).map(rowToEvent);
   return buildDysonState(events, listAgents(db), { ...options, day });
 }
 
