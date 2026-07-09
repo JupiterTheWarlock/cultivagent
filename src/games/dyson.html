@@ -1060,7 +1060,10 @@
       const remainDuration = (1 - Number(options.progress || 0)) * SHOT_DURATION;
       const predictAngle = keplerSpeed(entry.entryRadius || CLOUD_ENTRY_RADIUS) * remainDuration;
       const target = entry.target.clone().applyAxisAngle(new THREE.Vector3(0, 1, 0), predictAngle);
-      const tangentDir = tangentFor(target.clone().setY(0).normalize());
+      // 第一段正圆弧：起点切线 = source 处公转切向（圆心落径向，≠恒星）
+      const tangent1 = tangentFor(source.clone().setY(0).normalize());
+      // 第一段终点切线，作为第二段起点切线（顺接，不倒车），也用于 nextCloudTarget 选 seed 方向
+      const endTangent = circleArcEndTangent(source, target, tangent1);
       const shot = {
         id: options.id || "",
         progress: Number(options.progress || 0),
@@ -1068,7 +1071,8 @@
         source: source.clone(),
         target: target.clone(),
         launchDir: shotLaunchDir,
-        tangent: tangentDir,
+        tangent1,
+        tangent: endTangent,
         projectile,
         trail,
       };
@@ -1094,8 +1098,8 @@
         const fade = Math.min(1, shot.progress / 0.14); // 仅渐入，接近机动点不淡出（为闪红留亮度）
         const eased = smoothstep(shot.progress);
         const prevEase = smoothstep(Math.max(0, shot.progress - 0.018));
-        const pos = arcLerp(shot.source, shot.target, shot.launchDir, eased);
-        const prev = arcLerp(shot.source, shot.target, shot.launchDir, prevEase);
+        const pos = circleArcLerp(shot.source, shot.target, shot.tangent1, eased);
+        const prev = circleArcLerp(shot.source, shot.target, shot.tangent1, prevEase);
         shot.projectile.position.copy(pos);
         shot.projectile.material.opacity = 0.88 * fade;
         shot.projectile.scale.setScalar(0.72 + fade * 0.28);
@@ -1165,7 +1169,7 @@
         cloud.age += dt;
         const p = Math.min(1, cloud.age / INJECTION_DURATION);
         const eased = smoothstep(p);
-        cloud.mesh.position.copy(orbitLerp(cloud.start, cloud.targetWorld, cloud.tangent, eased));
+        cloud.mesh.position.copy(circleArcLerp(cloud.start, cloud.targetWorld, cloud.tangent, eased));
         cloud.mesh.scale.setScalar(0.9 - eased * 0.28);
         const mat = cloud.mesh.material;
         const base = cloud.baseColor;
@@ -1215,22 +1219,21 @@
       const entryRadius = Math.min(CLOUD_ENTRY_RADIUS, Math.max(CLOUD_RADIUS_MAX - 2, sourceRadius * 1.12));
       let best = null;       // 就近 + 机动 <阈值
       let fallback = null;   // 兜底：切线对齐最高分
-      for (const sign of [1, -1]) {
-        for (let step = 0; step < 14; step += 1) {
-          const advance = sign * (0.18 + step * 0.055 + random01(seed + step * 17) * 0.035);
-          const radial = base.clone().applyAxisAngle(new THREE.Vector3(0, 1, 0), advance).normalize();
-          const tangent = tangentFor(radial);
-          const target = radial.clone().multiplyScalar(entryRadius);
-          // 对应高度：星环厚度范围内（±0.17*radius）随机，匹配 seed 高度分布
-          target.y = (random01(seed + step * 31) - 0.5) * entryRadius * 0.34;
-          const launchDir = target.clone().sub(source).normalize();
-          const launchFlat = launchDir.clone().setY(0).normalize();
-          const score = horizontalTangentDot(source, target, tangent);
-          if (!fallback || score > fallback.score) fallback = { target: target.clone(), tangent: tangent.clone(), launchDir: launchDir.clone(), launchFlat: launchFlat.clone(), entryRadius, score };
-          if (score < HORIZONTAL_TANGENT_COS) continue; // 机动角超阈值，不纳入就近候选
-          const dist = source.distanceToSquared(target);
-          if (!best || dist < best.dist) best = { target: target.clone(), tangent: tangent.clone(), launchDir: launchDir.clone(), launchFlat: launchFlat.clone(), entryRadius, dist };
-        }
+      for (let step = 0; step < 14; step += 1) {
+        const advance = 0.18 + step * 0.055 + random01(seed + step * 17) * 0.035; // 只选公转前方，保证第一段与第二段顺接
+        const radial = base.clone().applyAxisAngle(new THREE.Vector3(0, 1, 0), advance).normalize();
+        const tangent = tangentFor(radial);
+        const target = radial.clone().multiplyScalar(entryRadius);
+        // 对应高度：与星云同分布（sin(band)*radius*0.34 + noise，见 buildCloudGeometry）
+        const band = (random01(seed + step * 23) - 0.5) * 0.34;
+        target.y = Math.sin(band) * entryRadius * 0.34 + (random01(seed + step * 41) - 0.5) * 3.8;
+        const launchDir = target.clone().sub(source).normalize();
+        const launchFlat = launchDir.clone().setY(0).normalize();
+        const score = horizontalTangentDot(source, target, tangent);
+        if (!fallback || score > fallback.score) fallback = { target: target.clone(), tangent: tangent.clone(), launchDir: launchDir.clone(), launchFlat: launchFlat.clone(), entryRadius, score };
+        if (score < HORIZONTAL_TANGENT_COS) continue; // 机动角超阈值，不纳入就近候选
+        const dist = source.distanceToSquared(target);
+        if (!best || dist < best.dist) best = { target: target.clone(), tangent: tangent.clone(), launchDir: launchDir.clone(), launchFlat: launchFlat.clone(), entryRadius, dist };
       }
       return best || fallback;
     }
@@ -1283,52 +1286,54 @@
       return dir.normalize().dot(tan.normalize());
     }
 
-    // 水平正圆弧插值：xz 在 y=0 平面走圆弧（source 处切线 = launchDir 定圆心侧），y 独立插值
-    function arcLerp(source, target, launchDir, t) {
-      const sx = source.x, sz = source.z;
-      const tx = target.x, tz = target.z;
-      const vx = tx - sx, vz = tz - sz;
+    // 正圆弧（圆心 ≠ 恒星）：圆心在起点切线的法线方向，过 b。
+    // 起点 tangentAtA = 公转切向时，圆心落在径向（≠恒星），起点切线即公转切向。
+    function circleArcLerp(a, b, tangentAtA, t) {
+      const ax = a.x, az = a.z;
+      const vx = b.x - ax, vz = b.z - az;
       const vlen2 = vx * vx + vz * vz;
-      if (vlen2 < 0.001) return source.clone().lerp(target, t);
-      const dx = launchDir.x, dz = launchDir.z;
-      const dl = Math.hypot(dx, dz) || 1;
-      const nx = -dz / dl, nz = dx / dl; // launchDir 的水平左法线
+      if (vlen2 < 1e-4) return a.clone().lerp(b, t);
+      let tx = tangentAtA.x, tz = tangentAtA.z;
+      const tl = Math.hypot(tx, tz) || 1;
+      tx /= tl; tz /= tl;
+      const nx = -tz, nz = tx; // 切线左法线（圆心侧候选）
       const nv = nx * vx + nz * vz;
-      if (Math.abs(nv) < 0.001) return source.clone().lerp(target, t); // 共线退化直线
+      if (Math.abs(nv) < 1e-4) return a.clone().lerp(b, t);
       const sgn = nv > 0 ? 1 : -1;
       const r = vlen2 / (2 * Math.abs(nv));
-      const cx = sx + sgn * nx * r;
-      const cz = sz + sgn * nz * r;
-      const thetaS = Math.atan2(sz - cz, sx - cx);
-      const thetaT = Math.atan2(tz - cz, tx - cx);
-      let dTheta = thetaT - thetaS;
+      const cx = ax + sgn * nx * r;
+      const cz = az + sgn * nz * r;
+      const thetaA = Math.atan2(az - cz, ax - cx);
+      const thetaB = Math.atan2(b.z - cz, b.x - cx);
+      let dTheta = thetaB - thetaA;
       if (sgn > 0) { while (dTheta < 0) dTheta += Math.PI * 2; }
       else { while (dTheta > 0) dTheta -= Math.PI * 2; }
-      const theta = thetaS + dTheta * t;
+      const theta = thetaA + dTheta * t;
       return new THREE.Vector3(
         cx + r * Math.cos(theta),
-        source.y + (target.y - source.y) * t,
+        a.y + (b.y - a.y) * t,
         cz + r * Math.sin(theta),
       );
     }
 
-    function orbitLerp(a, b, tangent, t) {
-      const ra = Math.hypot(a.x, a.z);
-      const rb = Math.hypot(b.x, b.z);
-      const aa = Math.atan2(a.z, a.x);
-      const ab = Math.atan2(b.z, b.x);
-      let delta = ab - aa;
-      const positiveDir = new THREE.Vector3(-Math.sin(aa), 0, Math.cos(aa));
-      const sign = positiveDir.dot(tangent.clone().setY(0).normalize()) >= 0 ? 1 : -1;
-      if (sign > 0) while (delta < 0) delta += Math.PI * 2;
-      if (sign < 0) while (delta > 0) delta -= Math.PI * 2;
-      const angle = aa + delta * t;
-      const r = ra + (rb - ra) * t; // 径向螺线：外径收拢到 seed 半径，不变浅
-      return new THREE.Vector3(
-        Math.cos(angle) * r,
-        THREE.MathUtils.lerp(a.y, b.y, t),
-        Math.sin(angle) * r,
-      );
+    // 同一圆弧在终点 b 处的水平切线（供第二段顺接）
+    function circleArcEndTangent(a, b, tangentAtA) {
+      const ax = a.x, az = a.z;
+      const vx = b.x - ax, vz = b.z - az;
+      const vlen2 = vx * vx + vz * vz;
+      if (vlen2 < 1e-4) return new THREE.Vector3(tangentAtA.x, 0, tangentAtA.z).normalize();
+      let tx = tangentAtA.x, tz = tangentAtA.z;
+      const tl = Math.hypot(tx, tz) || 1;
+      tx /= tl; tz /= tl;
+      const nx = -tz, nz = tx;
+      const nv = nx * vx + nz * vz;
+      if (Math.abs(nv) < 1e-4) return new THREE.Vector3(vx, 0, vz).normalize();
+      const sgn = nv > 0 ? 1 : -1;
+      const r = vlen2 / (2 * Math.abs(nv));
+      const cx = ax + sgn * nx * r;
+      const cz = az + sgn * nz * r;
+      const thetaB = Math.atan2(b.z - cz, b.x - cx);
+      return new THREE.Vector3(-Math.sin(thetaB) * sgn, 0, Math.cos(thetaB) * sgn);
     }
 
     function swapCloudSeed(a, b) {
