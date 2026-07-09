@@ -409,6 +409,7 @@ try {
   assert.match(dyson, /serviceSeeded/);
   assert.match(dyson, /replayClouds/);
   assert.match(dyson, /planetOrbitPosition/);
+  assert.match(dyson, /\[30, -30, 20, -20, 10, -10, 0\]/);
   assert.match(dyson, /orbit\.rotation\.x = inclination/);
   assert.doesNotMatch(dyson, /planet\.pivot\.rotation\.y = planet\.baseAngle/);
   assert.doesNotMatch(dyson, /orbit\.rotation\.z =/);

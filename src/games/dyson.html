@@ -782,7 +782,7 @@
       const size = 2.2 + (index % 5) * 0.28;
       const speed = 0.06 / Math.sqrt(index + 1);
       const baseAngle = index * 2.399963;
-      const inclination = THREE.MathUtils.degToRad(4 + (index % 6) * 2);
+      const inclination = THREE.MathUtils.degToRad([30, -30, 20, -20, 10, -10, 0][index % 7]);
       const color = new THREE.Color(statusColor("idle"));
       const pivot = new THREE.Group();
       root.add(pivot);
