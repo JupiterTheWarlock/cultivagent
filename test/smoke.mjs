@@ -405,6 +405,11 @@ try {
   assert.match(dyson, /SKY_STAR_COUNT/);
   assert.match(dyson, /skySphere\.position\.copy\(camera\.position\)/);
   assert.match(dyson, /syncSettledClouds/);
+  assert.match(dyson, /detail: "1"/);
+  assert.match(dyson, /smoothServerClock/);
+  assert.match(dyson, /syncServerClock/);
+  assert.match(dyson, /syncServiceShots/);
+  assert.match(dyson, /emittedAtMs/);
   assert.match(dyson, /resetServiceReplay/);
   assert.match(dyson, /serviceSeeded/);
   assert.match(dyson, /replayClouds/);

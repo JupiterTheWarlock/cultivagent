@@ -333,7 +333,11 @@
     const CLOUD_RADIUS_MAX = 54;
     const CLOUD_ENTRY_RADIUS = CLOUD_RADIUS_MAX + 3;
     const HORIZONTAL_TANGENT_COS = Math.cos(Math.PI / 6);
-    const CLOUD_ORBIT_SPEED = 0.025;
+    // 开普勒第三定律基准：以第一颗行星为基准点（index 0 → radius = CLOUD_RADIUS_MAX + 24）
+    const BASE_PLANET_RADIUS = CLOUD_RADIUS_MAX + 24;
+    const BASE_ANGULAR_SPEED = 0.06;
+    const CLOUD_ORBIT_SPEED = keplerSpeed(CLOUD_RADIUS_MAX);
+    const CLOUD_SPEED_BUCKETS = 8; // 云带按半径分桶差速，内快外慢营造流动感
     const CLOUD_EMIT_RATE = 10;
     const SHOT_DURATION = 8.4;
     const MAX_ACTIVE_SHOTS = 96;
@@ -341,6 +345,11 @@
     const SKY_STAR_COUNT = 1800;
     const SKY_SPHERE_RADIUS = 720;
     const STAR_LIGHT_BASE = 1200;
+
+    // 开普勒角速度 ω ∝ a^(-3/2)：以 BASE_PLANET_RADIUS 处为 BASE_ANGULAR_SPEED
+    function keplerSpeed(radius) {
+      return BASE_ANGULAR_SPEED * Math.pow(BASE_PLANET_RADIUS / radius, 1.5);
+    }
 
     const els = {
       scene: document.getElementById("scene"),
@@ -391,6 +400,8 @@
       serviceSeeded: false,
       debugAgents: new Map(),
       serverClockOffsetMs: 0,
+      serverClockOffsetTargetMs: 0,
+      serverClockSynced: false,
       serviceDay: "",
       serviceDayStartMs: 0,
       mouse: new THREE.Vector2(10, 10),
@@ -447,6 +458,13 @@
     root.add(cloudGroup);
     const cloudGeometry = buildCloudGeometry(FREE_CLOUD_MAX);
     const cloudSeedPositions = cloudGeometry.attributes.position.array.slice();
+    // 差速旋转预算：每点半径、θ₀ 的 cos/sin、所属桶（同桶共享 ω，加法展开避免每点 cos/sin）
+    const cloudRadius = new Float32Array(FREE_CLOUD_MAX);
+    const cloudCosTheta0 = new Float32Array(FREE_CLOUD_MAX);
+    const cloudSinTheta0 = new Float32Array(FREE_CLOUD_MAX);
+    const cloudBucket = new Uint8Array(FREE_CLOUD_MAX);
+    const bucketOmega = new Float32Array(CLOUD_SPEED_BUCKETS);
+    buildCloudSpeedBuckets();
     const cloudMaterial = new THREE.PointsMaterial({
       color: 0x79e8ff,
       size: 0.24,
@@ -501,6 +519,7 @@
 
     function animate() {
       const dt = Math.min(clock.getDelta(), 0.05);
+      smoothServerClock(dt);
       const t = serviceSeconds();
       advanceCloudCount(dt);
       updateDysonShell(t);
@@ -515,8 +534,75 @@
     function advanceCloudCount(dt) {
       state.freeClouds = Math.floor(Math.max(0, Math.min(FREE_CLOUD_MAX, state.visualClouds)));
       clouds.geometry.setDrawRange(0, state.freeClouds);
-      cloudGroup.rotation.y = tamedRotation(CLOUD_ORBIT_SPEED);
-      cloudGroup.rotation.z = 0;
+      updateCloudPositions();
+    }
+
+    // 按半径分桶，每桶用代表半径的开普勒角速度；同桶点共享 ω
+    function buildCloudSpeedBuckets() {
+      const span = CLOUD_RADIUS_MAX - CLOUD_RADIUS_MIN;
+      const sumR = new Float32Array(CLOUD_SPEED_BUCKETS);
+      const countR = new Uint32Array(CLOUD_SPEED_BUCKETS);
+      for (let i = 0; i < FREE_CLOUD_MAX; i += 1) {
+        const x = cloudSeedPositions[i * 3];
+        const z = cloudSeedPositions[i * 3 + 2];
+        const r = Math.hypot(x, z) || 1;
+        cloudRadius[i] = r;
+        cloudCosTheta0[i] = x / r;
+        cloudSinTheta0[i] = z / r;
+        let bucket = Math.floor(((r - CLOUD_RADIUS_MIN) / span) * CLOUD_SPEED_BUCKETS);
+        bucket = Math.max(0, Math.min(CLOUD_SPEED_BUCKETS - 1, bucket));
+        cloudBucket[i] = bucket;
+        sumR[bucket] += r;
+        countR[bucket] += 1;
+      }
+      for (let k = 0; k < CLOUD_SPEED_BUCKETS; k += 1) {
+        const meanR = countR[k] ? sumR[k] / countR[k] : CLOUD_RADIUS_MAX;
+        bucketOmega[k] = keplerSpeed(meanR);
+      }
+    }
+
+    // 差速旋转：cloudGroup 不再整体旋转，每个云点按所属桶的 ω 独立旋转。
+    // cos(a+b) 加法展开，每点 4 乘 2 加，三角函数仅 K 次/帧。
+    function updateCloudPositions() {
+      const n = state.freeClouds;
+      if (n <= 0) return;
+      const t = clock.elapsedTime;
+      const cosPhi = (updateCloudPositions._cosPhi ||= new Float32Array(CLOUD_SPEED_BUCKETS));
+      const sinPhi = (updateCloudPositions._sinPhi ||= new Float32Array(CLOUD_SPEED_BUCKETS));
+      for (let k = 0; k < CLOUD_SPEED_BUCKETS; k += 1) {
+        const phi = bucketOmega[k] * t;
+        cosPhi[k] = Math.cos(phi);
+        sinPhi[k] = Math.sin(phi);
+      }
+      const arr = cloudGeometry.attributes.position.array;
+      for (let i = 0; i < n; i += 1) {
+        const k = cloudBucket[i];
+        const cT = cloudCosTheta0[i];
+        const sT = cloudSinTheta0[i];
+        const cosPhiK = cosPhi[k];
+        const sinPhiK = sinPhi[k];
+        const r = cloudRadius[i];
+        arr[i * 3] = r * (cT * cosPhiK - sT * sinPhiK);
+        arr[i * 3 + 1] = cloudSeedPositions[i * 3 + 1];
+        arr[i * 3 + 2] = r * (sT * cosPhiK + cT * sinPhiK);
+      }
+      cloudGeometry.attributes.position.needsUpdate = true;
+    }
+
+    // 种子点 i 在 t 时刻位置（root 局部系），供注入落点选择
+    function cloudWorldAt(i, t) {
+      const k = cloudBucket[i];
+      const phi = bucketOmega[k] * t;
+      const cosPhi = Math.cos(phi);
+      const sinPhi = Math.sin(phi);
+      const cT = cloudCosTheta0[i];
+      const sT = cloudSinTheta0[i];
+      const r = cloudRadius[i];
+      return new THREE.Vector3(
+        r * (cT * cosPhi - sT * sinPhi),
+        cloudSeedPositions[i * 3 + 1],
+        r * (sT * cosPhi + cT * sinPhi),
+      );
     }
 
     function updateDysonShell(t) {
@@ -525,7 +611,7 @@
       const visible = Math.min(structures.panelCount, structureTotal);
       setSoccerShellVisible(structures, visible);
       structureGroup.visible = visible > 0;
-      structureGroup.rotation.y = t * 0.018;
+      structureGroup.rotation.y = tamedRotation(CLOUD_ORBIT_SPEED);
       structureGroup.rotation.x = Math.sin(t * 0.05) * 0.05;
       const density = Math.min(1, structureTotal / 80);
       structures.panels.material.opacity = structureTotal ? 0.74 + density * 0.16 : 0;
@@ -540,9 +626,10 @@
         const world = new THREE.Vector3();
         planet.mesh.getWorldPosition(world);
         const entry = planet.batchEntry || cloudEntryFor(world, planet.emitSeed);
-        const launchDir = entryTargetFor(world, entry).sub(world).normalize();
+        const launchDir = entry.target.clone().sub(world).normalize();
         const mount = world.clone().addScaledVector(launchDir, planet.size * 1.25);
         updateFactory(planet, mount, launchDir, t);
+        syncServiceShots(planet);
         updateEmissionQueue(planet, world, muzzleTipFor(planet, launchDir), launchDir, dt);
         updateShots(planet, dt);
       }
@@ -598,6 +685,7 @@
       return new URLSearchParams({
         start: String(Math.floor(startMs / 1000)),
         end: String(Math.floor(endMs / 1000)),
+        detail: "1",
       });
     }
 
@@ -630,7 +718,7 @@
         if (state.range.liveToday) renderRangeControls();
         const dyson = await getJson("/api/dyson/state?" + dysonParams());
         const serverNowMs = Date.parse(dyson.server_now);
-        if (Number.isFinite(serverNowMs)) state.serverClockOffsetMs = serverNowMs - Date.now();
+        if (Number.isFinite(serverNowMs)) syncServerClock(serverNowMs);
         state.serviceDayStartMs = Date.parse(dyson.range?.start) || Date.parse(`${dyson.day}T00:00:00.000Z`) || state.serviceDayStartMs;
         state.targetTokens = Number(dyson.totals?.tokens || 0);
         state.targetClouds = Number(dyson.totals?.clouds || 0);
@@ -649,7 +737,7 @@
     function syncSettledClouds(day, settledClouds, targetFreeClouds) {
       const target = clamp(Math.floor(Number(targetFreeClouds || 0)), 0, FREE_CLOUD_MAX);
       const settled = clamp(Math.floor(Number(settledClouds || 0)), 0, target);
-      if (state.serviceDay !== day || state.visualClouds > target) {
+      if (state.serviceDay !== day) {
         state.serviceDay = day || "";
         state.visualClouds = settled;
         state.freeClouds = settled;
@@ -657,6 +745,14 @@
         return true;
       }
       state.serviceDay = day || "";
+      if (state.visualClouds > target) {
+        if (!hasReplayWork()) {
+          state.visualClouds = target;
+          state.freeClouds = target;
+          clouds.geometry.setDrawRange(0, target);
+        }
+        return false;
+      }
       if (settled > state.visualClouds && !hasReplayWork()) {
         state.visualClouds = settled;
         state.freeClouds = settled;
@@ -676,6 +772,9 @@
         status: agent.status,
         last_event_at: agent.current_batch?.started_at || agent.batches?.at(-1)?.started_at || new Date().toISOString(),
         summary: agent.summary || { username: agent.source_agent, meta: { agent_status: agent.status } },
+        current_batch: agent.current_batch,
+        active_shots: agent.active_shots || [],
+        batches: agent.batches || [],
       }));
       const usageByAgent = new Map();
       for (const agent of serviceAgents) {
@@ -709,6 +808,7 @@
 
     function clearPlanetShots(planet) {
       for (let i = planet.shots.length - 1; i >= 0; i -= 1) removeShotAt(planet, i);
+      planet.shotIds.clear();
       planet.batchEntry = null;
       planet.emitAccumulator = 0;
     }
@@ -760,11 +860,13 @@
         planet.index = index;
         planet.row = row;
         planet.status = statusOf(row);
+        planet.serviceDriven = Array.isArray(row.batches);
+        planet.serviceBatches = planet.serviceDriven ? liveServiceBatches(row.batches) : [];
         planet.mesh.material.color.set(statusColor(planet.status));
         planet.mesh.material.emissive.set(statusColor(planet.status));
         const nextTarget = Math.max(0, Math.floor(usageByAgent.get(key) || usageByAgent.get(row.source_agent) || 0));
         const previousTarget = state.agentCloudTargets.get(key);
-        const replayClouds = previousTarget == null
+        const replayClouds = planet.serviceDriven ? 0 : previousTarget == null
           ? (state.serviceSeeded ? nextTarget : 0)
           : Math.max(0, nextTarget - previousTarget);
         if (replayClouds > 0) {
@@ -777,10 +879,17 @@
       renderAgentRows();
     }
 
+    function liveServiceBatches(batches) {
+      return (batches || []).filter((batch) =>
+        Number(batch.pending_clouds || 0) > 0 ||
+        Number(batch.emitted_clouds || 0) > Number(batch.settled_clouds || 0)
+      );
+    }
+
     function createPlanet(key, index) {
       const radius = CLOUD_RADIUS_MAX + 24 + (index % 9) * 18 + Math.floor(index / 9) * 8;
       const size = 2.2 + (index % 5) * 0.28;
-      const speed = 0.06 / Math.sqrt(index + 1);
+      const speed = keplerSpeed(radius);
       const baseAngle = index * 2.399963;
       const inclination = THREE.MathUtils.degToRad([30, -30, 20, -20, 10, -10, 0][index % 7]);
       const color = new THREE.Color(statusColor("idle"));
@@ -842,7 +951,8 @@
 
       const planet = {
         key, index, pivot, mesh, atmosphere, orbit, factory, base, muzzle, statusRing,
-        radius, size, speed, baseAngle, inclination, color, shots: [], emitAccumulator: 0, emitSeed: 0, batchEntry: null,
+        radius, size, speed, baseAngle, inclination, color, shots: [], shotIds: new Set(),
+        emitAccumulator: 0, emitSeed: 0, batchEntry: null, serviceDriven: false, serviceBatches: [],
       };
       applyPlanetDrawPrefs(planet);
       return planet;
@@ -877,6 +987,7 @@
     }
 
     function updateEmissionQueue(planet, source, muzzleTip, launchDir, dt) {
+      if (planet.serviceDriven) return;
       let pending = state.pendingByAgent.get(planet.key) || 0;
       if (pending <= 0) {
         planet.emitAccumulator = 0;
@@ -897,6 +1008,38 @@
       if (pending <= 0) planet.batchEntry = null;
     }
 
+    function syncServiceShots(planet) {
+      if (!planet.serviceDriven || !planet.serviceBatches.length) return;
+      const nowMs = serviceNowMs();
+      for (const batch of planet.serviceBatches) {
+        const startedMs = Date.parse(batch.started_at);
+        const emitRate = Number(batch.emit_rate || CLOUD_EMIT_RATE);
+        const cloudCount = Math.floor(Number(batch.cloud_count || 0));
+        if (!Number.isFinite(startedMs) || !Number.isFinite(emitRate) || emitRate <= 0 || cloudCount <= 0) continue;
+        const emitted = clamp(Math.floor(((nowMs - startedMs) / 1000) * emitRate), 0, cloudCount);
+        const settled = clamp(Math.floor(((nowMs - startedMs - SHOT_DURATION * 1000) / 1000) * emitRate) + 1, 0, emitted);
+        const first = Math.max(settled, emitted - MAX_ACTIVE_SHOTS);
+        for (let index = first; index < emitted; index += 1) {
+          syncServiceShot(planet, batch, index, startedMs + (index / emitRate) * 1000, nowMs);
+        }
+      }
+    }
+
+    function syncServiceShot(planet, batch, index, emittedAtMs, nowMs) {
+      const id = `${batch.batch_id}:${index}`;
+      if (planet.shotIds.has(id)) return;
+      const batchStartMs = Date.parse(batch.started_at);
+      const batchWorld = planetWorldAt(planet, serviceSecondsAt(Number.isFinite(batchStartMs) ? batchStartMs : emittedAtMs));
+      const shotWorld = planetWorldAt(planet, serviceSecondsAt(emittedAtMs));
+      const entry = cloudEntryFor(batchWorld, Number(batch.entry_seed || batch.launch_seed || index));
+      const launchDir = entry.target.clone().sub(shotWorld).normalize();
+      spawnCloudShot(planet, muzzleTipAt(shotWorld, planet.size, launchDir), entry, launchDir, {
+        id,
+        emittedAtMs,
+        progress: clamp((nowMs - emittedAtMs) / (SHOT_DURATION * 1000), 0, 1),
+      });
+    }
+
     function spawnCloudShot(planet, source, entry, launchDir, options = {}) {
       const color = planet.color.clone();
       const projectile = new THREE.Mesh(
@@ -912,10 +1055,15 @@
       scene.add(projectile, trail);
 
       const shotLaunchDir = launchDir.clone().normalize();
-      const target = rayEntryTarget(source, shotLaunchDir, entry.entryRadius || CLOUD_ENTRY_RADIUS);
+      // target 取 entry 机动点（外径圆+对应高度），按云流动预测到到达时刻，避免飞行期间脱靶
+      const remainDuration = (1 - Number(options.progress || 0)) * SHOT_DURATION;
+      const predictAngle = keplerSpeed(entry.entryRadius || CLOUD_ENTRY_RADIUS) * remainDuration;
+      const target = entry.target.clone().applyAxisAngle(new THREE.Vector3(0, 1, 0), predictAngle);
       const tangentDir = tangentFor(target.clone().setY(0).normalize());
       const shot = {
+        id: options.id || "",
         progress: Number(options.progress || 0),
+        emittedAtMs: Number(options.emittedAtMs || 0),
         source: source.clone(),
         target: target.clone(),
         launchDir: shotLaunchDir,
@@ -923,6 +1071,7 @@
         projectile,
         trail,
       };
+      if (shot.id) planet.shotIds.add(shot.id);
       planet.shots.push(shot);
       return shot;
     }
@@ -931,18 +1080,34 @@
       return planet.factory.localToWorld(new THREE.Vector3(0, 2.35, 0)).addScaledVector(launchDir, 0.42);
     }
 
+    function muzzleTipAt(world, size, launchDir) {
+      return world.clone().addScaledVector(launchDir, size * 2.3075 + 0.42);
+    }
+
     function updateShots(planet, dt) {
       for (let i = planet.shots.length - 1; i >= 0; i -= 1) {
         const shot = planet.shots[i];
-        shot.progress = Math.min(1, shot.progress + dt / SHOT_DURATION);
-        const fade = Math.min(1, shot.progress / 0.14, (1 - shot.progress) / 0.18);
+        shot.progress = shot.emittedAtMs
+          ? Math.min(1, Math.max(shot.progress, (serviceNowMs() - shot.emittedAtMs) / (SHOT_DURATION * 1000)))
+          : Math.min(1, shot.progress + dt / SHOT_DURATION);
+        const fade = Math.min(1, shot.progress / 0.14); // 仅渐入，接近机动点不淡出（为闪红留亮度）
         const eased = smoothstep(shot.progress);
         const prevEase = smoothstep(Math.max(0, shot.progress - 0.018));
-        const pos = shot.source.clone().lerp(shot.target, eased);
-        const prev = shot.source.clone().lerp(shot.target, prevEase);
+        const pos = arcLerp(shot.source, shot.target, shot.launchDir, eased);
+        const prev = arcLerp(shot.source, shot.target, shot.launchDir, prevEase);
         shot.projectile.position.copy(pos);
         shot.projectile.material.opacity = 0.88 * fade;
         shot.projectile.scale.setScalar(0.72 + fade * 0.28);
+
+        // 接近机动点闪红
+        if (shot.progress > 0.88) {
+          const k = (shot.progress - 0.88) / 0.12;
+          shot.projectile.material.color.setRGB(
+            THREE.MathUtils.lerp(planet.color.r, 1, k),
+            THREE.MathUtils.lerp(planet.color.g, 0.25, k),
+            THREE.MathUtils.lerp(planet.color.b, 0.25, k),
+          );
+        }
 
         if (shot.progress < 0.025) {
           shot.trail.material.opacity = 0;
@@ -965,12 +1130,14 @@
       shot.trail.material.dispose();
       shot.projectile.material.dispose();
       planet.shots.splice(index, 1);
+      if (shot.id) planet.shotIds.delete(shot.id);
     }
 
     function spawnInjectedCloud(target, tangent, color) {
       const cloudTarget = nextCloudTarget(target, tangent);
+      const baseColor = color.clone();
       const material = new THREE.MeshBasicMaterial({
-        color,
+        color: baseColor.clone(),
         transparent: true,
         opacity: 0.82,
         depthWrite: false,
@@ -986,6 +1153,8 @@
         targetWorld: cloudTarget.world,
         tangent: tangent.clone().normalize(),
         age: 0,
+        baseColor,
+        flashRed: 0.14, // 机动瞬间闪红
       });
     }
 
@@ -996,8 +1165,29 @@
         const p = Math.min(1, cloud.age / INJECTION_DURATION);
         const eased = smoothstep(p);
         cloud.mesh.position.copy(orbitLerp(cloud.start, cloud.targetWorld, cloud.tangent, eased));
-        cloud.mesh.material.opacity = 0.82 * (1 - eased);
         cloud.mesh.scale.setScalar(0.9 - eased * 0.28);
+        const mat = cloud.mesh.material;
+        const base = cloud.baseColor;
+        // 机动瞬间闪红（前 0.14s），lerp 回原色
+        if (cloud.flashRed > 0) {
+          cloud.flashRed = Math.max(0, cloud.flashRed - dt);
+          const k = cloud.flashRed / 0.14;
+          mat.color.setRGB(
+            THREE.MathUtils.lerp(base.r, 1, k),
+            THREE.MathUtils.lerp(base.g, 0.25, k),
+            THREE.MathUtils.lerp(base.b, 0.25, k),
+          );
+        }
+        // 到达瞬间闪白（最后 15%），不淡出仅提亮
+        if (p > 0.85) {
+          const k = (p - 0.85) / 0.15;
+          mat.opacity = 0.82 + 0.18 * k;
+          mat.color.setRGB(
+            THREE.MathUtils.lerp(base.r, 1, k),
+            THREE.MathUtils.lerp(base.g, 1, k),
+            THREE.MathUtils.lerp(base.b, 1, k),
+          );
+        }
         if (p >= 1) {
           commitCloudPoint();
           scene.remove(cloud.mesh);
@@ -1022,60 +1212,56 @@
       base.normalize();
       const sourceRadius = Math.hypot(source.x, source.z);
       const entryRadius = Math.min(CLOUD_ENTRY_RADIUS, Math.max(CLOUD_RADIUS_MAX - 2, sourceRadius * 1.12));
-      let best = null;
+      let best = null;       // 就近 + 机动 <阈值
+      let fallback = null;   // 兜底：切线对齐最高分
       for (const sign of [1, -1]) {
         for (let step = 0; step < 14; step += 1) {
           const advance = sign * (0.18 + step * 0.055 + random01(seed + step * 17) * 0.035);
           const radial = base.clone().applyAxisAngle(new THREE.Vector3(0, 1, 0), advance).normalize();
           const tangent = tangentFor(radial);
           const target = radial.clone().multiplyScalar(entryRadius);
-          const score = horizontalTangentDot(source, target, tangent);
+          // 对应高度：星环厚度范围内（±0.17*radius）随机，匹配 seed 高度分布
+          target.y = (random01(seed + step * 31) - 0.5) * entryRadius * 0.34;
           const launchDir = target.clone().sub(source).normalize();
           const launchFlat = launchDir.clone().setY(0).normalize();
-          if (!best || score > best.score) best = { target, tangent, launchDir, launchFlat, entryRadius, score };
-          if (score >= HORIZONTAL_TANGENT_COS) return { target, tangent, launchDir, launchFlat, entryRadius };
+          const score = horizontalTangentDot(source, target, tangent);
+          if (!fallback || score > fallback.score) fallback = { target: target.clone(), tangent: tangent.clone(), launchDir: launchDir.clone(), launchFlat: launchFlat.clone(), entryRadius, score };
+          if (score < HORIZONTAL_TANGENT_COS) continue; // 机动角超阈值，不纳入就近候选
+          const dist = source.distanceToSquared(target);
+          if (!best || dist < best.dist) best = { target: target.clone(), tangent: tangent.clone(), launchDir: launchDir.clone(), launchFlat: launchFlat.clone(), entryRadius, dist };
         }
       }
-      return best;
-    }
-
-    function entryTargetFor(source, entry) {
-      const dir = entry.launchFlat.clone().normalize();
-      const radius = entry.entryRadius || CLOUD_ENTRY_RADIUS;
-      return rayEntryTarget(source, dir, radius);
-    }
-
-    function rayEntryTarget(source, dir, radius) {
-      if (Math.abs(dir.y) > 0.001) {
-        const planeDistance = -source.y / dir.y;
-        if (planeDistance > 0) return source.clone().addScaledVector(dir, planeDistance);
-      }
-      const b = 2 * (source.x * dir.x + source.z * dir.z);
-      const c = source.x ** 2 + source.z ** 2 - radius ** 2;
-      const disc = Math.max(0, b * b - 4 * c);
-      const near = (-b - Math.sqrt(disc)) / 2;
-      const far = (-b + Math.sqrt(disc)) / 2;
-      const distance = near > 0 ? near : far > 0 ? far : radius;
-      const target = source.clone().addScaledVector(dir, distance);
-      target.y = 0;
-      return target;
+      return best || fallback;
     }
 
     function nextCloudTarget(worldPosition, tangent) {
-      const local = cloudGroup.worldToLocal(worldPosition.clone());
       const base = Math.floor(state.visualClouds);
       if (base >= FREE_CLOUD_MAX) return { world: worldPosition.clone() };
+      const t = clock.elapsedTime;
+      const cosPhi = [];
+      const sinPhi = [];
+      for (let k = 0; k < CLOUD_SPEED_BUCKETS; k += 1) {
+        const phi = bucketOmega[k] * t;
+        cosPhi[k] = Math.cos(phi);
+        sinPhi[k] = Math.sin(phi);
+      }
       let best = -1;
       let bestDistance = Infinity;
       const limit = Math.min(FREE_CLOUD_MAX, base + 2048);
       for (let i = base; i < limit; i += 1) {
-        const x = cloudSeedPositions[i * 3];
-        const y = cloudSeedPositions[i * 3 + 1];
-        const z = cloudSeedPositions[i * 3 + 2];
-        const candidateWorld = cloudGroup.localToWorld(new THREE.Vector3(x, y, z));
-        const forward = candidateWorld.clone().sub(worldPosition).dot(tangent);
-        if (horizontalTangentDot(worldPosition, candidateWorld, tangent) < HORIZONTAL_TANGENT_COS) continue;
-        const distance = (x - local.x) ** 2 + (y - local.y) ** 2 + (z - local.z) ** 2 - forward * 0.35;
+        const k = cloudBucket[i];
+        const cT = cloudCosTheta0[i];
+        const sT = cloudSinTheta0[i];
+        const r = cloudRadius[i];
+        const cx = r * (cT * cosPhi[k] - sT * sinPhi[k]);
+        const cy = cloudSeedPositions[i * 3 + 1];
+        const cz = r * (sT * cosPhi[k] + cT * sinPhi[k]);
+        const dx = cx - worldPosition.x;
+        const dy = cy - worldPosition.y;
+        const dz = cz - worldPosition.z;
+        const forward = dx * tangent.x + dy * tangent.y + dz * tangent.z;
+        if (horizontalTangentDot(worldPosition, new THREE.Vector3(cx, cy, cz), tangent) < HORIZONTAL_TANGENT_COS) continue;
+        const distance = dx * dx + dy * dy + dz * dz - forward * 0.35;
         if (distance < bestDistance) {
           best = i;
           bestDistance = distance;
@@ -1083,13 +1269,8 @@
       }
       if (best < 0) best = base;
       swapCloudSeed(base, best);
-      const targetLocal = new THREE.Vector3(
-        cloudSeedPositions[base * 3],
-        cloudSeedPositions[base * 3 + 1],
-        cloudSeedPositions[base * 3 + 2],
-      );
-      const targetWorld = cloudGroup.localToWorld(targetLocal.clone());
-      return { world: targetWorld };
+      // 预测 INJECTION_DURATION 后的落点：粒子飞行期间云点继续流动，到达时 seed 正好转到这
+      return { world: cloudWorldAt(base, t + INJECTION_DURATION) };
     }
 
     function horizontalTangentDot(from, to, tangent) {
@@ -1101,8 +1282,38 @@
       return dir.normalize().dot(tan.normalize());
     }
 
+    // 水平正圆弧插值：xz 在 y=0 平面走圆弧（source 处切线 = launchDir 定圆心侧），y 独立插值
+    function arcLerp(source, target, launchDir, t) {
+      const sx = source.x, sz = source.z;
+      const tx = target.x, tz = target.z;
+      const vx = tx - sx, vz = tz - sz;
+      const vlen2 = vx * vx + vz * vz;
+      if (vlen2 < 0.001) return source.clone().lerp(target, t);
+      const dx = launchDir.x, dz = launchDir.z;
+      const dl = Math.hypot(dx, dz) || 1;
+      const nx = -dz / dl, nz = dx / dl; // launchDir 的水平左法线
+      const nv = nx * vx + nz * vz;
+      if (Math.abs(nv) < 0.001) return source.clone().lerp(target, t); // 共线退化直线
+      const sgn = nv > 0 ? 1 : -1;
+      const r = vlen2 / (2 * Math.abs(nv));
+      const cx = sx + sgn * nx * r;
+      const cz = sz + sgn * nz * r;
+      const thetaS = Math.atan2(sz - cz, sx - cx);
+      const thetaT = Math.atan2(tz - cz, tx - cx);
+      let dTheta = thetaT - thetaS;
+      if (sgn > 0) { while (dTheta < 0) dTheta += Math.PI * 2; }
+      else { while (dTheta > 0) dTheta -= Math.PI * 2; }
+      const theta = thetaS + dTheta * t;
+      return new THREE.Vector3(
+        cx + r * Math.cos(theta),
+        source.y + (target.y - source.y) * t,
+        cz + r * Math.sin(theta),
+      );
+    }
+
     function orbitLerp(a, b, tangent, t) {
       const ra = Math.hypot(a.x, a.z);
+      const rb = Math.hypot(b.x, b.z);
       const aa = Math.atan2(a.z, a.x);
       const ab = Math.atan2(b.z, b.x);
       let delta = ab - aa;
@@ -1111,26 +1322,27 @@
       if (sign > 0) while (delta < 0) delta += Math.PI * 2;
       if (sign < 0) while (delta > 0) delta -= Math.PI * 2;
       const angle = aa + delta * t;
+      const r = ra + (rb - ra) * t; // 径向螺线：外径收拢到 seed 半径，不变浅
       return new THREE.Vector3(
-        Math.cos(angle) * ra,
+        Math.cos(angle) * r,
         THREE.MathUtils.lerp(a.y, b.y, t),
-        Math.sin(angle) * ra,
+        Math.sin(angle) * r,
       );
     }
 
     function swapCloudSeed(a, b) {
       if (a === b) return;
-      const attr = cloudGeometry.attributes.position;
+      // 种子 xyz 与旋转预算属性成对交换，几何位置下一帧由 updateCloudPositions 重算
       for (let offset = 0; offset < 3; offset += 1) {
-        const ai = a * 3 + offset;
-        const bi = b * 3 + offset;
+        const ai = a * 3 + offset, bi = b * 3 + offset;
         const value = cloudSeedPositions[ai];
         cloudSeedPositions[ai] = cloudSeedPositions[bi];
         cloudSeedPositions[bi] = value;
-        attr.array[ai] = cloudSeedPositions[ai];
-        attr.array[bi] = cloudSeedPositions[bi];
       }
-      attr.needsUpdate = true;
+      let v = cloudRadius[a]; cloudRadius[a] = cloudRadius[b]; cloudRadius[b] = v;
+      v = cloudCosTheta0[a]; cloudCosTheta0[a] = cloudCosTheta0[b]; cloudCosTheta0[b] = v;
+      v = cloudSinTheta0[a]; cloudSinTheta0[a] = cloudSinTheta0[b]; cloudSinTheta0[b] = v;
+      const bk = cloudBucket[a]; cloudBucket[a] = cloudBucket[b]; cloudBucket[b] = bk;
     }
 
     function smoothstep(t) {
@@ -1142,8 +1354,9 @@
     }
 
     function tangentFor(radial) {
-      let tangent = new THREE.Vector3().crossVectors(new THREE.Vector3(0, 1, 0), radial);
-      if (tangent.lengthSq() < 0.001) tangent = new THREE.Vector3().crossVectors(new THREE.Vector3(1, 0, 0), radial);
+      // 切线与星球公转同向（angle 递增）：用 radial × (0,1,0)
+      let tangent = new THREE.Vector3().crossVectors(radial, new THREE.Vector3(0, 1, 0));
+      if (tangent.lengthSq() < 0.001) tangent = new THREE.Vector3().crossVectors(radial, new THREE.Vector3(1, 0, 0));
       return tangent.normalize();
     }
 
@@ -1520,9 +1733,28 @@
       return row.summary?.username || row.summary?.meta?.username || row.host_id || row.source_agent || "agent";
     }
 
+    function syncServerClock(serverNowMs) {
+      const offset = serverNowMs - Date.now();
+      state.serverClockOffsetTargetMs = offset;
+      if (!state.serverClockSynced) {
+        state.serverClockOffsetMs = offset;
+        state.serverClockSynced = true;
+      }
+    }
+
+    function smoothServerClock(dt) {
+      if (!state.serverClockSynced) return;
+      const diff = state.serverClockOffsetTargetMs - state.serverClockOffsetMs;
+      state.serverClockOffsetMs += clamp(diff, -dt * 250, dt * 250);
+    }
+
+    function serviceNowMs() {
+      return Date.now() + state.serverClockOffsetMs;
+    }
+
     function serviceSeconds() {
       if (!state.serviceDayStartMs) return clock.elapsedTime;
-      return serviceSecondsAt(Date.now() + state.serverClockOffsetMs);
+      return serviceSecondsAt(serviceNowMs());
     }
 
     function serviceSecondsAt(ms) {
