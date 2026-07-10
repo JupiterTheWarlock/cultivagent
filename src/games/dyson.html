@@ -1151,8 +1151,9 @@
       const remainDuration = (1 - Number(options.progress || 0)) * SHOT_DURATION;
       const predictAngle = keplerSpeed(entry.entryRadius || CLOUD_ENTRY_RADIUS) * remainDuration;
       const target = entry.target.clone().applyAxisAngle(new THREE.Vector3(0, 1, 0), predictAngle);
-      // 抛物线初速度方向：炮口抬高（偏离目标方向），恒星重力把弹道拉弯到 target
-      const shotLaunchDir = launchDirFor(source, target);
+      // 抛物线初速度 = 炮口方向（外部 launchDir，已含抬高，与炮口模型/source 同向）。
+      // 保证 source 反向指向球心，粒子从炮口正前方出发，不横向偏移。
+      const shotLaunchDir = launchDir.clone().normalize();
       // 第一段终点切线，作为第二段起点切线（顺接），也用于 nextCloudTarget 选 seed 方向
       const endTangent = parabolaLerpEndTangent(source, target, shotLaunchDir);
       const shot = {
