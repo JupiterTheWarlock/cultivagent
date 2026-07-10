@@ -38,14 +38,16 @@ export function openDatabase(dbPath) {
       host_id TEXT NOT NULL,
       workspace_id TEXT NOT NULL,
       model TEXT NOT NULL,
+      provider TEXT NOT NULL DEFAULT 'unknown',
       input_tokens REAL NOT NULL DEFAULT 0,
       output_tokens REAL NOT NULL DEFAULT 0,
       cache_read_tokens REAL NOT NULL DEFAULT 0,
       cache_write_tokens REAL NOT NULL DEFAULT 0,
       total_tokens REAL NOT NULL DEFAULT 0,
       cost_usd REAL,
+      error_count INTEGER NOT NULL DEFAULT 0,
       event_count INTEGER NOT NULL DEFAULT 0,
-      PRIMARY KEY(day, source_agent, host_id, workspace_id, model)
+      PRIMARY KEY(day, source_agent, host_id, workspace_id, model, provider)
     );
 
     CREATE TABLE IF NOT EXISTS agent_state (
@@ -281,17 +283,18 @@ function upsertDaily(db, event) {
   const u = event.usage;
   db.prepare(`
     INSERT INTO daily_usage (
-      day, source_agent, host_id, workspace_id, model,
+      day, source_agent, host_id, workspace_id, model, provider,
       input_tokens, output_tokens, cache_read_tokens, cache_write_tokens,
-      total_tokens, cost_usd, event_count
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
-    ON CONFLICT(day, source_agent, host_id, workspace_id, model) DO UPDATE SET
+      total_tokens, cost_usd, error_count, event_count
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
+    ON CONFLICT(day, source_agent, host_id, workspace_id, model, provider) DO UPDATE SET
       input_tokens = input_tokens + excluded.input_tokens,
       output_tokens = output_tokens + excluded.output_tokens,
       cache_read_tokens = cache_read_tokens + excluded.cache_read_tokens,
       cache_write_tokens = cache_write_tokens + excluded.cache_write_tokens,
       total_tokens = total_tokens + excluded.total_tokens,
       cost_usd = COALESCE(cost_usd, 0) + COALESCE(excluded.cost_usd, 0),
+      error_count = error_count + excluded.error_count,
       event_count = event_count + 1
   `).run(
     event.day,
@@ -299,12 +302,14 @@ function upsertDaily(db, event) {
     event.host_id,
     event.workspace_id,
     event.model,
+    event.provider || "unknown",
     u.input_tokens,
     u.output_tokens,
     u.cache_read_tokens,
     u.cache_write_tokens,
     u.total_tokens,
     u.cost_usd,
+    event.status === "error" ? 1 : 0,
   );
 }
 
@@ -577,6 +582,59 @@ function migrateDatabase(db) {
     }
   }
   db.exec("CREATE INDEX IF NOT EXISTS events_username_idx ON events(username, occurred_at)");
+  db.exec("CREATE INDEX IF NOT EXISTS events_occurred_at_idx ON events(occurred_at)");
+
+  // daily_usage 升级：补 provider（纳入主键）+ error_count；SQLite 无法直接改主键，需重建表
+  const dailyCols = db.prepare("PRAGMA table_info(daily_usage)").all().map((row) => row.name);
+  if (!dailyCols.includes("provider")) {
+    db.exec(`
+      CREATE TABLE daily_usage_v2 (
+        day TEXT NOT NULL,
+        source_agent TEXT NOT NULL,
+        host_id TEXT NOT NULL,
+        workspace_id TEXT NOT NULL,
+        model TEXT NOT NULL,
+        provider TEXT NOT NULL DEFAULT 'unknown',
+        input_tokens REAL NOT NULL DEFAULT 0,
+        output_tokens REAL NOT NULL DEFAULT 0,
+        cache_read_tokens REAL NOT NULL DEFAULT 0,
+        cache_write_tokens REAL NOT NULL DEFAULT 0,
+        total_tokens REAL NOT NULL DEFAULT 0,
+        cost_usd REAL,
+        error_count INTEGER NOT NULL DEFAULT 0,
+        event_count INTEGER NOT NULL DEFAULT 0,
+        PRIMARY KEY(day, source_agent, host_id, workspace_id, model, provider)
+      );
+      INSERT INTO daily_usage_v2 (
+        day, source_agent, host_id, workspace_id, model, provider,
+        input_tokens, output_tokens, cache_read_tokens, cache_write_tokens,
+        total_tokens, cost_usd, error_count, event_count
+      )
+      SELECT
+        day, source_agent, host_id, workspace_id, model,
+        COALESCE(NULLIF(provider, ''), 'unknown'),
+        SUM(COALESCE(CAST(json_extract(usage_json, '$.input_tokens') AS REAL), 0)),
+        SUM(COALESCE(CAST(json_extract(usage_json, '$.output_tokens') AS REAL), 0)),
+        SUM(COALESCE(CAST(json_extract(usage_json, '$.cache_read_tokens') AS REAL), 0)),
+        SUM(COALESCE(CAST(json_extract(usage_json, '$.cache_write_tokens') AS REAL), 0)),
+        SUM(COALESCE(CAST(json_extract(usage_json, '$.total_tokens') AS REAL), 0)),
+        SUM(COALESCE(CAST(json_extract(usage_json, '$.cost_usd') AS REAL), 0)),
+        SUM(CASE WHEN status = 'error' THEN 1 ELSE 0 END),
+        COUNT(*)
+      FROM events
+      WHERE (json_extract(meta_json, '$.accounting') IS NULL OR json_extract(meta_json, '$.accounting') != 0)
+        AND (
+          COALESCE(CAST(json_extract(usage_json, '$.input_tokens') AS REAL), 0) +
+          COALESCE(CAST(json_extract(usage_json, '$.output_tokens') AS REAL), 0) +
+          COALESCE(CAST(json_extract(usage_json, '$.cache_read_tokens') AS REAL), 0) +
+          COALESCE(CAST(json_extract(usage_json, '$.cache_write_tokens') AS REAL), 0) +
+          COALESCE(CAST(json_extract(usage_json, '$.total_tokens') AS REAL), 0)
+        ) > 0
+      GROUP BY day, source_agent, host_id, workspace_id, model, provider;
+      DROP TABLE daily_usage;
+      ALTER TABLE daily_usage_v2 RENAME TO daily_usage;
+    `);
+  }
 }
 
 function unique(values) {
