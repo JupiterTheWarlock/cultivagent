@@ -702,13 +702,13 @@
         planet.mesh.rotation.x = Math.sin(t * 0.4 + planet.index) * 0.12;
         const world = new THREE.Vector3();
         planet.mesh.getWorldPosition(world);
+        // 先驱动发射（spawnCloudShot 设 lastShotDir），再让炮口模型适配最新 v0
+        syncServiceShots(planet);
+        updateEmissionQueue(planet, world, dt);
         const entry = planet.batchEntry || cloudEntryFor(world, planet.emitSeed);
-        // 炮口方向：优先跟随最近一次发射的 v0，否则朝当前 entry
         const launchDir = planet.lastShotDir || launchDirFor(world, entry.target);
         const mount = world.clone().addScaledVector(launchDir, planet.size * 1.25);
         updateFactory(planet, mount, launchDir, t);
-        syncServiceShots(planet);
-        updateEmissionQueue(planet, world, dt);
         updateShots(planet, dt);
       }
     }
@@ -1354,7 +1354,7 @@
         const dz = cz - worldPosition.z;
         const forward = dx * tangent.x + dy * tangent.y + dz * tangent.z;
         if (horizontalTangentDot(worldPosition, new THREE.Vector3(cx, cy, cz), tangent) < HORIZONTAL_TANGENT_COS) continue;
-        const distance = dx * dx + dz * dz + dy * dy * 4 - forward * 0.35; // 高度权重 ×4：垂直选点，seed 匹配机动点高度
+        const distance = dx * dx + dz * dz + dy * dy * 10 - forward * 0.35; // 高度权重 ×10：强制垂直选点，seed 匹配机动点高度
         if (distance < bestDistance) {
           best = i;
           bestDistance = distance;
@@ -1414,10 +1414,13 @@
       ).normalize();
     }
 
-    // 抛物线初速度方向：目标方向上叠加远离恒星的抬高量（否则 vDir=目标方向时弹道退化为直线）
+    // 抛物线初速度方向：目标方向上叠加**水平向外**的抬高量（不含 y），
+    // 否则 v0 被抬向上→弹道先升后降（完整抛物线开头就斜向上扭）。
+    // 水平抬高 → 半抛物线，开头沿炮口方向直出，重力把它拉弯到目标。
     function launchDirFor(source, target) {
       const dir = target.clone().sub(source);
-      const up = source.clone().normalize();
+      const up = source.clone().setY(0).normalize();
+      if (up.lengthSq() < 1e-4) up.set(1, 0, 0);
       const rise = source.distanceTo(target) * ARC_RISE;
       dir.addScaledVector(up, rise).normalize();
       return dir;
