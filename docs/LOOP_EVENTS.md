@@ -1,5 +1,7 @@
 # Agent Loop Events
 
+> [English](./LOOP_EVENTS.md) · [中文](./LOOP_EVENTS.zh.md)
+
 Cultivagent does not treat vendor hook names as the product model. Vendor hooks are raw input. The monitor translates them into canonical loop events for dashboard state, token accounting, and future game UI.
 
 ## Canonical Loop

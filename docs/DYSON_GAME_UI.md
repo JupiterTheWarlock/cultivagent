@@ -1,5 +1,7 @@
 # Dyson Game UI Design
 
+> [English](./DYSON_GAME_UI.en.md) · [中文](./DYSON_GAME_UI.md)
+
 本文件记录 cultivagent 游戏化状态面板的产品和视觉要求。它是后续实现与验收标准，不是插件市场设计。
 
 ## 目标

@@ -1,116 +1,113 @@
 # Cultivagent
 
-Cultivagent is a small self-hosted, **pure passive** monitor for coding-agent hooks, CLI smoke checks, and token rollups.
+> A self-hosted, privacy-first monitor for AI coding agents — one dashboard for every hook, every token, every agent.
 
-- Node.js HTTP service (built-in `node:sqlite`) or Cloudflare Worker + D1.
-- In-memory TTL event pool for recent hook events.
-- Daily usage rollups.
-- Dashboard at `http://127.0.0.1:3737`.
-- Auth (token + login-page cookie) for remote / HTTPS deployment.
-- Plugins for Claude Code, Codex, OpenCode, Pi, OpenClaw, Locus — install via one-line installer, local marketplace, or read-only collector.
+[English](./README.md) · [中文](./README.zh.md)
 
-No prompt text, command text, file contents, or tool output is stored by default. **No MCP, no agent-callable interface** — agents only `POST` hook events to `/ingest`.
+---
 
-## Hook Coverage
+Cultivagent is a **pure passive** ingest sink for coding-agent hooks and token usage. Point your agents' hooks at it, and it collects, normalizes, and visualizes everything they do — across Claude Code, Codex, OpenCode, Pi, OpenClaw, and Locus — in a single self-hosted dashboard.
 
-Cultivagent ingests any hook / plugin / extension / OTel event sent to `/ingest` or `/otel/*`. Each installed adapter forwards every event it observes; raw vendor hook names are translated into canonical loop events (`input.received`, `model.request.start`, `tool.before`, `tool.end`, `agent.end`, `agent.idle`). Token totals come only from events that include usage fields (model response events, OTel usage metrics, verified adapter payloads). Plain lifecycle hooks show in the request log but do not add fake token usage.
+No prompts, commands, file contents, or tool outputs are ever stored. **No MCP, no agent-callable interface** — agents can only `POST` events to `/ingest`. They cannot read, query, or manipulate the monitor, so your usage data stays honest.
 
-See [docs/LOOP_EVENTS.md](docs/LOOP_EVENTS.md).
+## Why Cultivagent
+
+- **One pane of glass for every agent.** Stop hopping between vendor dashboards. Every agent's lifecycle, tokens, and cost roll up into one timeline.
+- **Privacy by design.** The monitor stores metadata and token counts — never your code or conversations.
+- **Agents can't cheat.** Because it's a write-only sink, no agent can read or alter what's recorded about it.
+- **Self-hosted, you own it.** Runs on Node.js + SQLite locally, or on a Cloudflare Worker + D1 for a hosted dashboard with auth.
+- **A dashboard that's actually fun to look at.** Token usage drives a live **Dyson sphere** visualization — agents are planets, tokens become Dyson clouds, milestones condense into structure. See [Dyson Game UI](./docs/DYSON_GAME_UI.md).
+
+## Features
+
+- **Multi-agent ingest** — hooks from Claude Code, Codex, OpenCode, Pi, OpenClaw; read-only collector for Locus.
+- **Canonical loop events** — raw vendor hook names are translated into a consistent loop model (`input.received`, `model.request.start`, `tool.before`, `agent.end`, …). See [Loop Events](./docs/LOOP_EVENTS.md).
+- **Honest token accounting** — counted only from completed model responses or official usage surfaces, never fabricated from lifecycle hooks.
+- **Daily rollups + recent-event pool** — daily token totals and a TTL pool of recent events for live inspection.
+- **Gamified Dyson view** at `/dyson` — a Three.js star system where today's activity is rendered in real time.
+- **Auth for remote deployment** — Bearer token, `x-cultivagent-token` header, or a dashboard login cookie (timing-safe, 30-day, HTTPS).
+- **Shared agent config** — one `~/.cultivagent/config.json` powers every plugin on a machine.
 
 ## Quick Start
 
 Requires Node.js 24+.
 
 ```bash
+git clone https://github.com/JupiterTheWarlock/cultivagent.git
+cd cultivagent
 npm start
 ```
 
-Open http://127.0.0.1:3737
+Open http://127.0.0.1:3737 — the dashboard. The Dyson view is at http://127.0.0.1:3737/dyson.
 
-Run checks:
-
-```bash
-npm run smoke
-npm run cli-smoke
-```
-
-## Install Agent Plugins
-
-One-line installers per agent — write `~/.cultivagent/config.json`, clone the repo, register the plugin. Full steps in [docs/INSTALL.md](docs/INSTALL.md).
-
-| Agent | Installer |
-|---|---|
-| Claude Code | `bash <(curl -fsSL https://raw.githubusercontent.com/JupiterTheWarlock/cultivagent/main/plugins/claude-code/setup-helper/install.sh)` |
-| Codex | `bash <(curl -fsSL https://raw.githubusercontent.com/JupiterTheWarlock/cultivagent/main/plugins/codex/setup-helper/install.sh)` |
-| OpenCode | `bash <(curl -fsSL https://raw.githubusercontent.com/JupiterTheWarlock/cultivagent/main/plugins/opencode/install.sh)` |
-| Pi | `bash <(curl -fsSL https://raw.githubusercontent.com/JupiterTheWarlock/cultivagent/main/plugins/pi/install.sh)` |
-| OpenClaw | native plugin entry — [plugins/openclaw/README.md](plugins/openclaw/README.md) |
-| Locus | read-only session collector — [plugins/locus/README.md](plugins/locus/README.md) |
-
-## Auth
-
-Local default (`http://127.0.0.1:3737`) needs no token. For LAN / public deployment:
+Run the built-in checks:
 
 ```bash
-export CULTIVAGENT_TOKEN=$(node bin/cultivagent.mjs token)
-CULTIVAGENT_TOKEN=$CULTIVAGENT_TOKEN npm start
+npm run smoke      # server endpoint smoke test
+npm run cli-smoke  # emit CLI events from each adapter
 ```
 
-With a token set, every path except `GET /api/health` requires auth (`Authorization: Bearer <token>`, `x-cultivagent-token`, or the `cultivagent_token` cookie set by the dashboard login page).
+Full setup (remote auth, Cloudflare Worker, systemd) → **[Install Guide](./docs/INSTALL.md)**.
 
-## Cloudflare Worker
+## Connect an Agent
 
-The Worker runtime serves the same dashboard and ingest/API surface using D1 for storage:
+Each agent has a one-line installer that writes `~/.cultivagent/config.json`, clones the repo, and registers the plugin. Re-running is safe.
+
+> Windows: run installers under **git-bash** (Git for Windows).
+
+| Agent | One-line install | Docs |
+|---|---|---|
+| Claude Code | `bash <(curl -fsSL https://raw.githubusercontent.com/JupiterTheWarlock/cultivagent/main/plugins/claude-code/setup-helper/install.sh)` | [claude-code](./plugins/claude-code/README.md) |
+| Codex | `bash <(curl -fsSL https://raw.githubusercontent.com/JupiterTheWarlock/cultivagent/main/plugins/codex/setup-helper/install.sh)` | [codex](./plugins/codex/README.md) |
+| OpenCode | `bash <(curl -fsSL https://raw.githubusercontent.com/JupiterTheWarlock/cultivagent/main/plugins/opencode/install.sh)` | [opencode](./plugins/opencode/README.md) |
+| Pi | `bash <(curl -fsSL https://raw.githubusercontent.com/JupiterTheWarlock/cultivagent/main/plugins/pi/install.sh)` | [pi](./plugins/pi/README.md) |
+| OpenClaw | native plugin entry (build required) | [openclaw](./plugins/openclaw/README.md) |
+| Locus | read-only session collector | [locus](./plugins/locus/README.md) |
+
+To point all agents at a hosted server first:
 
 ```bash
-npx wrangler d1 create cultivagent
-# copy the database_id into wrangler.jsonc
-npm run worker:migrate:remote
-npx wrangler secret put CULTIVAGENT_TOKEN
-npm run worker:deploy
+export CULTIVAGENT_ENDPOINT=https://your-host.example.com
+export CULTIVAGENT_TOKEN=<token from the server>
+export CULTIVAGENT_USERNAME=<machine label>
 ```
 
-`npm run worker:prepare` copies `src/dashboard.html` into the Worker static assets directory before `wrangler dev` or `wrangler deploy`.
+## Deploy
+
+**Local** (default, no auth): `npm start` → http://127.0.0.1:3737
+
+**VPS / LAN** (Node + auth): generate a token and require login.
+→ [Ubuntu / systemd guide](./docs/UBUNTU.md)
+
+**Cloudflare Worker + D1**: same dashboard and API, global edge, D1 storage.
+→ [Worker deployment in the Install Guide](./docs/INSTALL.md#cloudflare-worker--d1-deployment)
+
+## Documentation
+
+The full docs library lives in [`docs/`](./docs/). Start at the **[docs index](./docs/README.md)**, or jump straight to:
+
+- [Install Guide](./docs/INSTALL.md) — server setup, auth, Cloudflare Worker, agent plugins
+- [Loop Events](./docs/LOOP_EVENTS.md) — canonical event model and vendor hook mapping
+- [Dyson Game UI](./docs/DYSON_GAME_UI.md) — design spec for the gamified visualization
+- [Product Spec](./docs/SPEC.md) — goals, normalized event shape, counting rules
+- [Plugin Architecture](./docs/PLUGIN_SPEC.md) — repo layout, auth model, plugin contracts
+- [Ubuntu / systemd](./docs/UBUNTU.md) — VPS deployment with reverse proxy
 
 ## API
 
 ```bash
+# health (anonymous, always public)
 curl http://127.0.0.1:3737/api/health
 
+# ingest a hook event
 curl -X POST http://127.0.0.1:3737/ingest \
   -H 'content-type: application/json' \
   -H "Authorization: Bearer $CULTIVAGENT_TOKEN" \
   -d '{"source_agent":"codex","event_type":"model_response","usage":{"input_tokens":10,"output_tokens":3}}'
 ```
 
-Endpoints: `POST /ingest`, `POST /otel/v1/logs`, `POST /otel/v1/metrics`, `GET /api/events`, `GET /api/daily`, `GET /api/agents`, `GET /api/pool`, `GET /api/usage/*`, `POST /api/login`, `POST /api/logout`.
+Endpoints: `POST /ingest`, `POST /otel/v1/logs`, `POST /otel/v1/metrics`, `GET /api/events`, `GET /api/daily`, `GET /api/agents`, `GET /api/pool`, `GET /api/usage/*`, `GET /api/dyson/state`, `POST /api/login`, `POST /api/logout`.
 
-## Docs
+## License
 
-- [Install guide](docs/INSTALL.md)
-- [Plugin spec](docs/PLUGIN_SPEC.md)
-- [Loop events](docs/LOOP_EVENTS.md)
-- [Ubuntu / systemd](docs/UBUNTU.md)
-
-## Status
-
-Implemented:
-
-- Local SQLite service + dashboard.
-- Auth: Bearer / `x-cultivagent-token` / login-page cookie (timing-safe) + `cultivagent token` generator.
-- `~/.cultivagent/config.json` shared config (env > config > default), including optional per-machine `username`.
-- Event normalization and dedupe; daily token rollups; recent event TTL pool.
-- Claude Code plugin (local marketplace + hooks + install.sh + `< 2.0` legacy fallback).
-- Codex plugin (copy + render-on-install, `config.toml` wiring, install.sh; no wrapper needed).
-- OpenCode / Pi plugins (adapter + install.sh).
-- OpenClaw native plugin entry (stub-grade).
-- Locus read-only session collector.
-- CLI smoke events for Codex, Claude Code, OpenCode.
-
-Usage-source notes:
-
-- Claude Code: the Stop hook runs a local session collector to report JSONL usage; native OTel export is optional.
-- Codex: the Stop hook runs a local session collector to report session JSONL usage; native OTel export is optional.
-- OpenCode: plugin events are live; `plugins/opencode/session-collector.mjs` can backfill `opencode.db` assistant-message usage when present.
-- OpenClaw: native plugin usage is counted from plugin payload usage fields, including nested `usageState` / `agentMeta` usage.
-- Locus: `plugins/locus/session-collector.mjs` reads completed `usageUpdate` rows from Locus' local `locus.db` and reports them as `source_agent: "locus"`.
+MIT

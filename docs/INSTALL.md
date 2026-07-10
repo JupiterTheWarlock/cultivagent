@@ -1,5 +1,7 @@
 # Cultivagent Install
 
+> [English](./INSTALL.md) · [中文](./INSTALL.zh.md)
+
 Cultivagent is a **pure passive ingest sink**: agents forward hook events to `POST /ingest`, the server stores them and renders a dashboard. No MCP, no agent-callable interface.
 
 ## 1. Run the server

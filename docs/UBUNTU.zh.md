@@ -1,8 +1,8 @@
-# Ubuntu Deployment
+# Ubuntu 部署
 
 > [English](./UBUNTU.md) · [中文](./UBUNTU.zh.md)
 
-Minimal self-hosted deployment:
+最小化自托管部署：
 
 ```bash
 sudo apt-get update
@@ -16,7 +16,7 @@ cd /opt/cultivagent
 npm run smoke
 ```
 
-Create `/etc/systemd/system/cultivagent.service`:
+创建 `/etc/systemd/system/cultivagent.service`：
 
 ```ini
 [Unit]
@@ -38,7 +38,7 @@ RestartSec=3
 WantedBy=multi-user.target
 ```
 
-Start it:
+启动：
 
 ```bash
 sudo systemctl daemon-reload
@@ -46,4 +46,4 @@ sudo systemctl enable --now cultivagent
 sudo systemctl status cultivagent
 ```
 
-Expose it with Caddy, Nginx, or Cloudflare Tunnel. Keep `CULTIVAGENT_TOKEN` enabled before accepting events from other machines.
+用 Caddy、Nginx 或 Cloudflare Tunnel 对外暴露。接收其他机器的事件前，务必先启用 `CULTIVAGENT_TOKEN`。

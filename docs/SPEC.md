@@ -1,5 +1,7 @@
 # Cultivagent Spec
 
+> [English](./SPEC.md) · [中文](./SPEC.zh.md)
+
 ## Goal
 
 Cultivagent collects local coding-agent lifecycle events and model usage into one self-hosted dashboard.
