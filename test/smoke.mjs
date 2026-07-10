@@ -469,7 +469,7 @@ try {
   assert.equal(launchingAgent.active_shots.length, 50);
   assert.equal(launchingAgent.active_shots[0].cloud_index, 0);
   assert.equal(launchingAgent.active_shots.at(-1).cloud_index, 49);
-  const dysonNearRing = await get(`${base}/api/dyson/state?day=2026-07-02&now=2026-07-02T00:00:08.450Z&detail=1`);
+  const dysonNearRing = await get(`${base}/api/dyson/state?day=2026-07-02&now=2026-07-02T00:00:09.650Z&detail=1`);
   const nearRingAgent = dysonNearRing.agents.find((agent) => agent.source_agent === "codex");
   assert.equal(nearRingAgent.settled_clouds, 1);
   assert.equal(nearRingAgent.active_shots[0].cloud_index, 1);
