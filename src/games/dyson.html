@@ -703,11 +703,12 @@
         const world = new THREE.Vector3();
         planet.mesh.getWorldPosition(world);
         const entry = planet.batchEntry || cloudEntryFor(world, planet.emitSeed);
-        const launchDir = launchDirFor(world, entry.target);
+        // 炮口方向：优先跟随最近一次发射的 v0，否则朝当前 entry
+        const launchDir = planet.lastShotDir || launchDirFor(world, entry.target);
         const mount = world.clone().addScaledVector(launchDir, planet.size * 1.25);
         updateFactory(planet, mount, launchDir, t);
         syncServiceShots(planet);
-        updateEmissionQueue(planet, world, muzzleTipFor(planet, launchDir), launchDir, dt);
+        updateEmissionQueue(planet, world, dt);
         updateShots(planet, dt);
       }
     }
@@ -1043,7 +1044,7 @@
       const planet = {
         key, index, pivot, mesh, atmosphere, orbit, factory, base, muzzle, statusRing,
         radius, size, speed, baseAngle, inclination, color, shots: [], shotIds: new Set(),
-        emitAccumulator: 0, emitSeed: 0, batchEntry: null, serviceDriven: false, serviceBatches: [],
+        emitAccumulator: 0, emitSeed: 0, batchEntry: null, lastShotDir: null, serviceDriven: false, serviceBatches: [],
       };
       applyPlanetDrawPrefs(planet);
       return planet;
@@ -1077,7 +1078,7 @@
       planet.factory.scale.setScalar(planet.size * 0.45);
     }
 
-    function updateEmissionQueue(planet, source, muzzleTip, launchDir, dt) {
+    function updateEmissionQueue(planet, source, dt) {
       if (planet.serviceDriven) return;
       let pending = state.pendingByAgent.get(planet.key) || 0;
       if (pending <= 0) {
@@ -1090,7 +1091,7 @@
       while (planet.emitAccumulator >= 1 && pending > 0 && planet.shots.length < MAX_ACTIVE_SHOTS) {
         // 每发独立选机动点（不共享 batchEntry），避免连成一条线
         const shotEntry = cloudEntryFor(source, planet.emitSeed++);
-        spawnCloudShot(planet, muzzleTip, shotEntry, launchDir);
+        spawnCloudShot(planet, source, shotEntry);
         pending -= 1;
         planet.emitAccumulator -= 1;
       }
@@ -1125,15 +1126,15 @@
       const batchWorld = planetWorldAt(planet, serviceSecondsAt(Number.isFinite(batchStartMs) ? batchStartMs : emittedAtMs));
       const shotWorld = planetWorldAt(planet, serviceSecondsAt(emittedAtMs));
       const entry = cloudEntryFor(batchWorld, Number(batch.entry_seed || batch.launch_seed || index));
-      const launchDir = launchDirFor(shotWorld, entry.target);
-      spawnCloudShot(planet, muzzleTipAt(shotWorld, planet.size, launchDir), entry, launchDir, {
+      spawnCloudShot(planet, shotWorld, entry, {
         id,
         emittedAtMs,
         progress: clamp((nowMs - emittedAtMs) / (SHOT_DURATION * 1000), 0, 1),
       });
     }
 
-    function spawnCloudShot(planet, source, entry, launchDir, options = {}) {
+    // planetCenter = 行星球心（世界坐标）；内部按 target 算 v0 和炮口尖端 source
+    function spawnCloudShot(planet, planetCenter, entry, options = {}) {
       const color = planet.color.clone();
       const projectile = new THREE.Mesh(
         projectileGeometry,
@@ -1147,23 +1148,27 @@
       trail.frustumCulled = false;
       scene.add(projectile, trail);
 
-      // target 取 entry 机动点（外径圆+对应高度），按云流动预测到到达时刻，避免飞行期间脱靶
+      // target 取 entry 机动点（入轨壁+对应高度），按云流动预测到到达时刻，避免飞行期间脱靶
       const remainDuration = (1 - Number(options.progress || 0)) * SHOT_DURATION;
       const predictAngle = keplerSpeed(entry.entryRadius || CLOUD_ENTRY_RADIUS) * remainDuration;
       const target = entry.target.clone().applyAxisAngle(new THREE.Vector3(0, 1, 0), predictAngle);
-      // 抛物线初速度 = 炮口方向（外部 launchDir，已含抬高，与炮口模型/source 同向）。
-      // 保证 source 反向指向球心，粒子从炮口正前方出发，不横向偏移。
-      const shotLaunchDir = launchDir.clone().normalize();
+      // 抛物线初速度 v0：朝 target + 抬高（远离恒星），每发随 target 变化
+      const v0 = launchDirFor(planetCenter, target);
+      // source（炮口尖端）= 球心 + v0 偏移，反向指向球心；粒子从炮口正前方出发
+      const muzzleOffset = planet.size * 2.3075 + 0.42;
+      const source = planetCenter.clone().addScaledVector(v0, muzzleOffset);
+      // 炮口模型跟踪最后发射方向（时刻对齐 v0）
+      planet.lastShotDir = v0.clone();
       // 第一段终点切线，作为第二段起点切线（顺接），也用于 nextCloudTarget 选 seed 方向
-      const endTangent = parabolaLerpEndTangent(source, target, shotLaunchDir);
+      const endTangent = parabolaLerpEndTangent(source, target, v0);
       const shot = {
         id: options.id || "",
         progress: Number(options.progress || 0),
         emittedAtMs: Number(options.emittedAtMs || 0),
-        source: source.clone(),
-        target: target.clone(),
-        launchDir: shotLaunchDir,
-        tangent1: shotLaunchDir,
+        source,
+        target,
+        launchDir: v0,
+        tangent1: v0,
         tangent: endTangent,
         projectile,
         trail,
@@ -1171,14 +1176,6 @@
       if (shot.id) planet.shotIds.add(shot.id);
       planet.shots.push(shot);
       return shot;
-    }
-
-    function muzzleTipFor(planet, launchDir) {
-      return planet.factory.localToWorld(new THREE.Vector3(0, 2.35, 0)).addScaledVector(launchDir, 0.42);
-    }
-
-    function muzzleTipAt(world, size, launchDir) {
-      return world.clone().addScaledVector(launchDir, size * 2.3075 + 0.42);
     }
 
     function updateShots(planet, dt) {
@@ -1357,7 +1354,7 @@
         const dz = cz - worldPosition.z;
         const forward = dx * tangent.x + dy * tangent.y + dz * tangent.z;
         if (horizontalTangentDot(worldPosition, new THREE.Vector3(cx, cy, cz), tangent) < HORIZONTAL_TANGENT_COS) continue;
-        const distance = dx * dx + dy * dy + dz * dz - forward * 0.35;
+        const distance = dx * dx + dz * dz + dy * dy * 4 - forward * 0.35; // 高度权重 ×4：垂直选点，seed 匹配机动点高度
         if (distance < bestDistance) {
           best = i;
           bestDistance = distance;
