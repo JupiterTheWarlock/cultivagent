@@ -1131,8 +1131,8 @@
         planet.status = statusOf(row);
         planet.serviceDriven = Array.isArray(row.batches);
         planet.serviceBatches = planet.serviceDriven ? liveServiceBatches(row.batches) : [];
-        planet.mesh.material.color.set(statusColor(planet.status));
-        planet.mesh.material.emissive.set(statusColor(planet.status));
+        // mesh 走 makeCelestialMaterial 的 ShaderMaterial（无 color/emissive 属性，勿调 .color/.emissive）；
+        // status 颜色由 updatePlanetVisual 通过 statusRing / atmosphere / orbit 表达
         const nextTarget = Math.max(0, Math.floor(usageByAgent.get(key) || usageByAgent.get(row.source_agent) || 0));
         const previousTarget = state.agentCloudTargets.get(key);
         const replayClouds = planet.serviceDriven ? 0 : previousTarget == null
