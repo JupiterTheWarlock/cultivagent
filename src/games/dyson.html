@@ -396,6 +396,11 @@
 
   <script type="module">
     import * as THREE from "three";
+    import {
+      buildShotTrajectory,
+      horizontalHermite,
+      parabolaPoint,
+    } from "/dyson-trajectory.mjs";
 
     const TOKEN_PER_CLOUD = 100;
     const STRUCTURE_TOKEN_COST = 10_000_000;
@@ -424,6 +429,7 @@
     const SKY_STAR_COUNT = 1800;
     const SKY_SPHERE_RADIUS = 720;
     const STAR_LIGHT_BASE = 1200;
+    const Y_AXIS = new THREE.Vector3(0, 1, 0);
 
     // 开普勒角速度 ω ∝ a^(-3/2)：以 BASE_PLANET_RADIUS 处为 BASE_ANGULAR_SPEED
     function keplerSpeed(radius) {
@@ -474,7 +480,6 @@
       agents: [],
       agentCloudTargets: new Map(),
       pendingByAgent: new Map(),
-      servicePendingByAgent: new Map(),
       serviceSeeded: false,
       debugAgents: new Map(),
       serverClockOffsetMs: 0,
@@ -508,7 +513,8 @@
 
     const camera = new THREE.PerspectiveCamera(48, window.innerWidth / window.innerHeight, 0.1, 900);
     const raycaster = new THREE.Raycaster();
-    const clock = new THREE.Clock();
+    const timer = new THREE.Timer();
+    timer.connect(document);
 
     const skySphere = buildSkySphere(SKY_STAR_COUNT);
     scene.add(skySphere);
@@ -780,11 +786,12 @@
     refreshData();
     setInterval(refreshData, FETCH_INTERVAL_MS);
 
-    function animate() {
-      const dt = Math.min(clock.getDelta(), 0.05);
+    function animate(timestamp) {
+      timer.update(timestamp);
+      const dt = Math.min(timer.getDelta(), 0.05);
       smoothServerClock(dt);
       const t = serviceSeconds();
-      advanceCloudCount(dt);
+      advanceCloudCount();
       updateDysonShell(t);
       updatePlanets(t, dt);
       updateCamera(t);
@@ -793,7 +800,7 @@
       renderer.render(scene, camera);
     }
 
-    function advanceCloudCount(dt) {
+    function advanceCloudCount() {
       state.freeClouds = Math.floor(Math.max(0, Math.min(FREE_CLOUD_MAX, state.visualClouds)));
       clouds.geometry.setDrawRange(0, state.freeClouds);
       updateCloudPositions();
@@ -801,7 +808,6 @@
 
     // 按半径分桶，每桶用代表半径的开普勒角速度；同桶点共享 ω
     function buildCloudSpeedBuckets() {
-      const span = CLOUD_RADIUS_MAX - CLOUD_RADIUS_MIN;
       const sumR = new Float32Array(CLOUD_SPEED_BUCKETS);
       const countR = new Uint32Array(CLOUD_SPEED_BUCKETS);
       for (let i = 0; i < FREE_CLOUD_MAX; i += 1) {
@@ -811,8 +817,7 @@
         cloudRadius[i] = r;
         cloudCosTheta0[i] = x / r;
         cloudSinTheta0[i] = z / r;
-        let bucket = Math.floor(((r - CLOUD_RADIUS_MIN) / span) * CLOUD_SPEED_BUCKETS);
-        bucket = Math.max(0, Math.min(CLOUD_SPEED_BUCKETS - 1, bucket));
+        const bucket = cloudBucketForRadius(r);
         cloudBucket[i] = bucket;
         sumR[bucket] += r;
         countR[bucket] += 1;
@@ -823,12 +828,17 @@
       }
     }
 
+    function cloudBucketForRadius(radius) {
+      const span = CLOUD_RADIUS_MAX - CLOUD_RADIUS_MIN;
+      return clamp(Math.floor(((radius - CLOUD_RADIUS_MIN) / span) * CLOUD_SPEED_BUCKETS), 0, CLOUD_SPEED_BUCKETS - 1);
+    }
+
     // 差速旋转：cloudGroup 不再整体旋转，每个云点按所属桶的 ω 独立旋转。
     // cos(a+b) 加法展开，每点 4 乘 2 加，三角函数仅 K 次/帧。
     function updateCloudPositions() {
       const n = state.freeClouds;
       if (n <= 0) return;
-      const t = clock.elapsedTime;
+      const t = serviceSeconds();
       const cosPhi = (updateCloudPositions._cosPhi ||= new Float32Array(CLOUD_SPEED_BUCKETS));
       const sinPhi = (updateCloudPositions._sinPhi ||= new Float32Array(CLOUD_SPEED_BUCKETS));
       for (let k = 0; k < CLOUD_SPEED_BUCKETS; k += 1) {
@@ -885,7 +895,7 @@
         planet.mesh.position.copy(planetOrbitPosition(planet, t));
         planet.mesh.rotation.y = t * 0.6;
         planet.mesh.rotation.x = Math.sin(t * 0.4 + planet.index) * 0.12;
-        const world = new THREE.Vector3();
+        const world = planet.worldPosition;
         planet.mesh.getWorldPosition(world);
         const pmat = planet.mesh.material;
         pmat.uniforms.uTime.value = t;
@@ -1037,7 +1047,6 @@
     }
 
     function syncServicePlanets(serviceAgents) {
-      state.servicePendingByAgent = new Map(serviceAgents.map((agent) => [agent.agent_key, Number(agent.pending_clouds || 0)]));
       const rows = serviceAgents.map((agent) => ({
         agent_key: agent.agent_key,
         source_agent: agent.source_agent,
@@ -1047,8 +1056,6 @@
         status: agent.status,
         last_event_at: agent.current_batch?.started_at || agent.batches?.at(-1)?.started_at || new Date().toISOString(),
         summary: agent.summary || { username: agent.source_agent, meta: { agent_status: agent.status } },
-        current_batch: agent.current_batch,
-        active_shots: agent.active_shots || [],
         batches: agent.batches || [],
       }));
       const usageByAgent = new Map();
@@ -1079,7 +1086,6 @@
     function clearPlanetShots(planet) {
       for (let i = planet.shots.length - 1; i >= 0; i -= 1) removeShotAt(planet, i);
       planet.shotIds.clear();
-      planet.batchEntry = null;
       planet.emitAccumulator = 0;
     }
 
@@ -1206,7 +1212,8 @@
       const planet = {
         key, index, pivot, mesh, atmosphere, orbit, statusRing,
         radius, size, speed, baseAngle, inclination, color, shots: [], shotIds: new Set(),
-        emitAccumulator: 0, emitSeed: 0, batchEntry: null, serviceDriven: false, serviceBatches: [],
+        worldPosition: new THREE.Vector3(),
+        emitAccumulator: 0, emitSeed: 0, serviceDriven: false, serviceBatches: [],
       };
       applyPlanetDrawPrefs(planet);
       return planet;
@@ -1215,19 +1222,29 @@
     // 行星视觉更新：颜色 / 状态环 / 大气 / 轨道。无炮塔——粒子从球心出发（见 spawnCloudShot）。
     function updatePlanetVisual(planet, t) {
       const status = planet.status || "idle";
-      const color = new THREE.Color(statusColor(status));
-      planet.color.copy(color);
-      planet.statusRing.material.color.copy(color);
-      planet.atmosphere.material.color.copy(color);
-      planet.orbit.material.color.copy(color);
+      planet.color.set(statusColor(status));
+      planet.statusRing.material.color.copy(planet.color);
+      planet.atmosphere.material.color.copy(planet.color);
+      planet.orbit.material.color.copy(planet.color);
       applyPlanetDrawPrefs(planet);
-      const pulse = status === "idle" || status === "done" ? 0.12 : 0.34 + Math.sin(t * 5) * 0.12;
+      const pulse = statusPulse(status, t);
       planet.statusRing.material.opacity = pulse;
       planet.atmosphere.material.opacity = state.draw.atmosphere ? 0.12 + pulse * 0.18 : 0;
       planet.orbit.material.opacity = state.draw.orbits ? 0.16 : 0;
-      planet.statusRing.position.copy(planet.mesh.getWorldPosition(new THREE.Vector3()));
-      planet.statusRing.scale.setScalar(planet.size * 1.65);
+      planet.statusRing.position.copy(planet.worldPosition);
+      planet.statusRing.scale.setScalar(planet.size * (1.58 + pulse * 0.2));
       planet.statusRing.quaternion.copy(camera.quaternion);
+    }
+
+    function statusPulse(status, t) {
+      if (status === "idle" || status === "done") return 0.12;
+      if (status === "waiting_approval" || status === "waiting_user") return 0.2 + Math.sin(t * 1.6) * 0.08;
+      if (status === "error") return 0.3 + Math.abs(Math.sin(t * 8)) * 0.28;
+      if (status === "tool_calling") return 0.32 + Math.abs(Math.sin(t * 7)) * 0.18;
+      if (status === "streaming") return 0.42 + Math.sin(t * 3) * 0.05;
+      if (status === "compacting") return 0.28 + Math.sin(t * 2.2) * 0.14;
+      if (status === "delegating") return 0.34 + Math.sin(t * 4) * Math.sin(t * 1.3) * 0.12;
+      return 0.34 + Math.sin(t * 5) * 0.12;
     }
 
     function updateEmissionQueue(planet, source, dt) {
@@ -1235,15 +1252,15 @@
       let pending = state.pendingByAgent.get(planet.key) || 0;
       if (pending <= 0) {
         planet.emitAccumulator = 0;
-        planet.batchEntry = null;
+        renderDebugQueue(planet, 0);
         return;
       }
-      if (!planet.batchEntry) planet.batchEntry = cloudEntryFor(source, planet.emitSeed++);
       planet.emitAccumulator += dt * CLOUD_EMIT_RATE;
       while (planet.emitAccumulator >= 1 && pending > 0 && planet.shots.length < MAX_ACTIVE_SHOTS) {
-        // 每发独立选机动点（不共享 batchEntry），避免连成一条线
-        const shotEntry = cloudEntryFor(source, planet.emitSeed++);
-        spawnCloudShot(planet, source, shotEntry);
+        const shotSeed = planet.emitSeed++;
+        const shotEntry = cloudEntryFor(source, shotSeed, serviceSeconds() + SHOT_DURATION);
+        if (!shotEntry) break;
+        spawnCloudShot(planet, source, shotEntry, { seed: shotSeed, cloudValue: 1 });
         pending -= 1;
         planet.emitAccumulator -= 1;
       }
@@ -1251,7 +1268,12 @@
         planet.emitAccumulator = Math.min(planet.emitAccumulator, 1);
       }
       state.pendingByAgent.set(planet.key, pending);
-      if (pending <= 0) planet.batchEntry = null;
+      renderDebugQueue(planet, pending);
+    }
+
+    function renderDebugQueue(planet, pending) {
+      if (planet.key !== debugAgent()) return;
+      els.debugLog.textContent = `visual beam: pending ${nf.format(pending)} / active ${nf.format(planet.shots.length)} @ ${CLOUD_EMIT_RATE}/s`;
     }
 
     function syncServiceShots(planet) {
@@ -1261,9 +1283,10 @@
         const startedMs = Date.parse(batch.started_at);
         const emitRate = Number(batch.emit_rate || CLOUD_EMIT_RATE);
         const cloudCount = Math.floor(Number(batch.cloud_count || 0));
-        if (!Number.isFinite(startedMs) || !Number.isFinite(emitRate) || emitRate <= 0 || cloudCount <= 0) continue;
-        const emitted = clamp(Math.floor(((nowMs - startedMs) / 1000) * emitRate), 0, cloudCount);
-        const settled = clamp(Math.floor(((nowMs - startedMs - SHOT_DURATION * 1000) / 1000) * emitRate) + 1, 0, emitted);
+        const shotCount = Math.floor(Number(batch.shot_count || cloudCount));
+        if (!Number.isFinite(startedMs) || !Number.isFinite(emitRate) || emitRate <= 0 || shotCount <= 0) continue;
+        const emitted = timedShotCount(nowMs - startedMs, emitRate, shotCount);
+        const settled = Math.min(emitted, timedShotCount(nowMs - startedMs - SHOT_DURATION * 1000, emitRate, shotCount));
         const first = Math.max(settled, emitted - MAX_ACTIVE_SHOTS);
         for (let index = first; index < emitted; index += 1) {
           syncServiceShot(planet, batch, index, startedMs + (index / emitRate) * 1000, nowMs);
@@ -1271,22 +1294,39 @@
       }
     }
 
+    function timedShotCount(elapsedMs, rate, count) {
+      if (elapsedMs < 0) return 0;
+      return clamp(Math.floor((elapsedMs / 1000) * rate) + 1, 0, count);
+    }
+
     function syncServiceShot(planet, batch, index, emittedAtMs, nowMs) {
       const id = `${batch.batch_id}:${index}`;
       if (planet.shotIds.has(id)) return;
-      const batchStartMs = Date.parse(batch.started_at);
-      const batchWorld = planetWorldAt(planet, serviceSecondsAt(Number.isFinite(batchStartMs) ? batchStartMs : emittedAtMs));
       const shotWorld = planetWorldAt(planet, serviceSecondsAt(emittedAtMs));
-      const entry = cloudEntryFor(batchWorld, Number(batch.entry_seed || batch.launch_seed || index));
+      const seed = shotSeedFor(Number(batch.entry_seed || batch.launch_seed || 0), index);
+      const entry = cloudEntryFor(shotWorld, seed, serviceSecondsAt(emittedAtMs + SHOT_DURATION * 1000));
+      if (!entry) return;
       spawnCloudShot(planet, shotWorld, entry, {
         id,
+        seed,
+        cloudValue: shotCloudValue(batch, index),
         emittedAtMs,
         progress: clamp((nowMs - emittedAtMs) / (SHOT_DURATION * 1000), 0, 1),
       });
     }
 
-    // planetCenter = 行星球心（世界坐标）；机动点取 entry.target（入轨壁上，不旋转预测角）。
-    // 单 obj 两段连续轨迹：段一抛物线 source → 机动点；段二在相位切换时解析 seed 后水平接入。
+    function shotCloudValue(batch, index) {
+      const clouds = Math.max(1, Math.floor(Number(batch.cloud_count || 1)));
+      const shots = Math.max(1, Math.floor(Number(batch.shot_count || clouds)));
+      return Math.max(1, Math.floor(((index + 1) * clouds) / shots) - Math.floor((index * clouds) / shots));
+    }
+
+    function shotSeedFor(batchSeed, index) {
+      return (Math.trunc(batchSeed) ^ Math.imul(index + 1, 0x9e3779b1)) >>> 0;
+    }
+
+    // planetCenter = 行星球心（世界坐标）；entry 已为本发独立解析 seed + maneuver。
+    // 单 obj 两段连续轨迹：段一抛物线 source → maneuver；段二水平 Hermite → seed。
     function spawnCloudShot(planet, planetCenter, entry, options = {}) {
       const color = planet.color.clone();
       const projectile = new THREE.Mesh(
@@ -1301,29 +1341,28 @@
       trail.frustumCulled = false;
       scene.add(projectile, trail);
 
-      // 机动点 = entry.target（入轨壁半径 + 对应高度），不叠加预测角旋转 —— 旋转会打散角度让弹道乱飞
-      const maneuver = entry.target.clone();
-      // 抛物线初速度 v0：朝机动点 + 水平抬高（远离恒星），每发随机动点变化
-      const v0 = launchDirFor(planetCenter, maneuver);
-      // 无炮塔：粒子直接从星球球心出发，v0 决定方向。source = 球心。
       const source = planetCenter.clone();
-      // 段一终点切线 = 段二起点切线（G1 顺接），并用于 nextCloudTarget 的前向偏置
-      const tangentManeuver = parabolaLerpEndTangent(source, maneuver, v0);
+      const progress = Number(options.progress || 0);
       const shot = {
         id: options.id || "",
-        progress: Number(options.progress || 0),
+        seedValue: Number(options.seed || 0),
+        cloudValue: Math.max(1, Math.floor(Number(options.cloudValue || 1))),
+        progress,
         emittedAtMs: Number(options.emittedAtMs || 0),
-        phase: 1,
+        phase: progress >= SHOT_PHASE1_RATIO ? 2 : 1,
         source,
-        maneuver,
-        seed: null,            // 段一→段二切换时由 nextCloudTarget 解析
-        tangent1: v0,
-        tangentManeuver,
-        tangentSeed: null,
+        maneuver: entry.maneuver,
+        seed: entry.seed,
+        seedBase: entry.seedBase,
+        coefficients: entry.coefficients,
+        tangentManeuver: entry.tangentManeuver,
+        tangentSeed: entry.tangentSeed,
         flashRed: 0,
         color,
         projectile,
         trail,
+        position: new THREE.Vector3(),
+        previousPosition: new THREE.Vector3(),
       };
       if (shot.id) planet.shotIds.add(shot.id);
       planet.shots.push(shot);
@@ -1337,17 +1376,14 @@
           ? Math.min(1, Math.max(shot.progress, (serviceNowMs() - shot.emittedAtMs) / (SHOT_DURATION * 1000)))
           : Math.min(1, shot.progress + dt / SHOT_DURATION);
 
-        // 段一 → 段二切换：解析 seed 落点 + 机动闪红。同一 obj 连续移动，不传送、不重生。
+        // 段一 → 段二切换：seed/maneuver 已在本发生成时固定，只触发机动闪红。
         if (shot.phase < 2 && shot.progress >= SHOT_PHASE1_RATIO) {
           shot.phase = 2;
-          const cloudTarget = nextCloudTarget(shot.maneuver, shot.tangentManeuver);
-          shot.seed = cloudTarget.world;
-          shot.tangentSeed = tangentFor(shot.seed.clone().setY(0).normalize());
           shot.flashRed = SHOT_FLASH_TIME;
         }
 
-        const pos = shotPosition(shot, shot.progress);
-        const prev = shotPosition(shot, Math.max(0, shot.progress - 0.018));
+        const pos = shotPosition(shot, shot.progress, shot.position);
+        const prev = shotPosition(shot, Math.max(0, shot.progress - 0.018), shot.previousPosition);
         shot.projectile.position.copy(pos);
         updateShotAppearance(shot, dt);
 
@@ -1358,7 +1394,7 @@
         }
 
         if (shot.progress >= 1) {
-          commitCloudPoint();
+          commitCloudPoints(shot.seedBase, shot.seedValue, shot.cloudValue);
           removeShotAt(planet, i);
         }
       }
@@ -1375,31 +1411,13 @@
     }
 
     // 单 obj 两段位置：段一抛物线 source → 机动点；段二水平 Hermite 机动点 → seed
-    function shotPosition(shot, progress) {
-      if (progress < SHOT_PHASE1_RATIO || !shot.seed) {
+    function shotPosition(shot, progress, out) {
+      if (progress < SHOT_PHASE1_RATIO) {
         const t1 = Math.min(1, progress / SHOT_PHASE1_RATIO);
-        return parabolaLerp(shot.source, shot.maneuver, shot.tangent1, smoothstep(t1));
+        return parabolaPoint(shot.source, shot.coefficients, t1, out);
       }
       const t2 = (progress - SHOT_PHASE1_RATIO) / (1 - SHOT_PHASE1_RATIO);
-      return horizontalHermite(shot.maneuver, shot.seed, shot.tangentManeuver, shot.tangentSeed, smoothstep(t2));
-    }
-
-    // 水平面 Hermite：p0 → p1 同高度（y 不变），起切线顺接段一终点切线（投影水平），
-    // 终切线 = seed 公转切线 → 第二段水平、顺公转入轨，且与第一段 G1 连续。
-    function horizontalHermite(p0, p1, t0, t1, t) {
-      const tt = t * t, ttt = tt * t;
-      const h00 = 2 * ttt - 3 * tt + 1;
-      const h10 = ttt - 2 * tt + t;
-      const h01 = -2 * ttt + 3 * tt;
-      const h11 = ttt - tt;
-      const chord = Math.max(0.001, Math.hypot(p1.x - p0.x, p1.z - p0.z));
-      const m0l = Math.max(1e-4, Math.hypot(t0.x, t0.z));
-      const m1l = Math.max(1e-4, Math.hypot(t1.x, t1.z));
-      return new THREE.Vector3(
-        h00 * p0.x + h01 * p1.x + chord * (h10 * t0.x / m0l + h11 * t1.x / m1l),
-        p0.y,
-        h00 * p0.z + h01 * p1.z + chord * (h10 * t0.z / m0l + h11 * t1.z / m1l),
-      );
+      return horizontalHermite(shot.maneuver, shot.seed, shot.tangentManeuver, shot.tangentSeed, t2, out);
     }
 
     // 单 obj 外观：渐入不淡出；机动闪红 → 到达闪白；段二收尾缩小融入云环
@@ -1447,154 +1465,57 @@
       shot.trail.material.opacity = shot.progress < 0.025 ? 0 : 0.46 * fadeIn;
     }
 
-    function commitCloudPoint() {
-      const index = Math.floor(state.visualClouds);
-      if (index >= FREE_CLOUD_MAX) return;
-      state.visualClouds = index + 1;
-      state.freeClouds = index + 1;
-      clouds.geometry.setDrawRange(0, state.freeClouds);
-    }
-
-    function cloudEntryFor(source, seed) {
-      const base = source.clone();
-      base.y = 0;
-      if (base.lengthSq() < 0.001) base.set(1, 0, 0);
-      base.normalize();
-      const sourceRadius = Math.hypot(source.x, source.z);
-      const entryRadius = Math.min(CLOUD_ENTRY_RADIUS, Math.max(CLOUD_RADIUS_MAX - 2, sourceRadius * 1.12));
-      let best = null;       // 就近 + 机动 <阈值
-      let fallback = null;   // 兜底：切线对齐最高分
-      for (let step = 0; step < 14; step += 1) {
-        const advance = 0.18 + step * 0.055 + random01(seed + step * 17) * 0.035; // 只选公转前方，保证第一段与第二段顺接
-        const radial = base.clone().applyAxisAngle(new THREE.Vector3(0, 1, 0), advance).normalize();
-        const tangent = tangentFor(radial);
-        const target = radial.clone().multiplyScalar(entryRadius);
-        // 对应高度：与星云同分布（sin(band)*radius*0.34 + noise，见 buildCloudGeometry）
-        const band = (random01(seed + step * 23) - 0.5) * 0.34;
-        target.y = Math.sin(band) * entryRadius * 0.34 + (random01(seed + step * 41) - 0.5) * 3.8;
-        const launchDir = target.clone().sub(source).normalize();
-        const launchFlat = launchDir.clone().setY(0).normalize();
-        const score = horizontalTangentDot(source, target, tangent);
-        if (!fallback || score > fallback.score) fallback = { target: target.clone(), tangent: tangent.clone(), launchDir: launchDir.clone(), launchFlat: launchFlat.clone(), entryRadius, score };
-        if (score < HORIZONTAL_TANGENT_COS) continue; // 机动角超阈值，不纳入就近候选
-        const dist = source.distanceToSquared(target);
-        if (!best || dist < best.dist) best = { target: target.clone(), tangent: tangent.clone(), launchDir: launchDir.clone(), launchFlat: launchFlat.clone(), entryRadius, dist };
+    function commitCloudPoints(seedBase, seed, count) {
+      let index = Math.floor(state.visualClouds);
+      const end = Math.min(FREE_CLOUD_MAX, index + count);
+      for (let offset = 0; index < end; index += 1, offset += 1) {
+        setCloudSeed(index, offset === 0 ? seedBase : nearbyCloudSeed(seedBase, seed, offset));
       }
-      return best || fallback;
+      state.visualClouds = index;
+      state.freeClouds = index;
+      clouds.geometry.setDrawRange(0, index);
+      cloudGeometry.attributes.position.needsUpdate = true;
     }
 
-    function nextCloudTarget(worldPosition, tangent) {
-      const base = Math.floor(state.visualClouds);
-      if (base >= FREE_CLOUD_MAX) return { world: worldPosition.clone() };
-      const t = clock.elapsedTime;
-      const cosPhi = [];
-      const sinPhi = [];
-      for (let k = 0; k < CLOUD_SPEED_BUCKETS; k += 1) {
-        const phi = bucketOmega[k] * t;
-        cosPhi[k] = Math.cos(phi);
-        sinPhi[k] = Math.sin(phi);
-      }
-      let best = -1;
-      let bestDistance = Infinity;
-      const limit = Math.min(FREE_CLOUD_MAX, base + 2048);
-      for (let i = base; i < limit; i += 1) {
-        const k = cloudBucket[i];
-        const cT = cloudCosTheta0[i];
-        const sT = cloudSinTheta0[i];
-        const r = cloudRadius[i];
-        const cx = r * (cT * cosPhi[k] - sT * sinPhi[k]);
-        const cy = cloudSeedPositions[i * 3 + 1];
-        const cz = r * (sT * cosPhi[k] + cT * sinPhi[k]);
-        const dx = cx - worldPosition.x;
-        const dy = cy - worldPosition.y;
-        const dz = cz - worldPosition.z;
-        const forward = dx * tangent.x + dy * tangent.y + dz * tangent.z;
-        if (horizontalTangentDot(worldPosition, new THREE.Vector3(cx, cy, cz), tangent) < HORIZONTAL_TANGENT_COS) continue;
-        const distance = dx * dx + dz * dz + dy * dy * 10 - forward * 0.35; // 高度权重 ×10：强制垂直选点，seed 匹配机动点高度
-        if (distance < bestDistance) {
-          best = i;
-          bestDistance = distance;
-        }
-      }
-      if (best < 0) best = base;
-      swapCloudSeed(base, best);
-      // 预测 INJECTION_DURATION 后的落点：粒子飞行期间云点继续流动，到达时 seed 正好转到这
-      return { world: cloudWorldAt(base, t + INJECTION_DURATION) };
+    function setCloudSeed(index, seedBase) {
+      const radius = Math.hypot(seedBase.x, seedBase.z);
+      cloudSeedPositions[index * 3] = seedBase.x;
+      cloudSeedPositions[index * 3 + 1] = seedBase.y;
+      cloudSeedPositions[index * 3 + 2] = seedBase.z;
+      cloudRadius[index] = radius;
+      cloudCosTheta0[index] = seedBase.x / radius;
+      cloudSinTheta0[index] = seedBase.z / radius;
+      cloudBucket[index] = cloudBucketForRadius(radius);
+      const world = cloudWorldAt(index, serviceSeconds());
+      const positions = cloudGeometry.attributes.position.array;
+      positions[index * 3] = world.x;
+      positions[index * 3 + 1] = world.y;
+      positions[index * 3 + 2] = world.z;
     }
 
-    function horizontalTangentDot(from, to, tangent) {
-      const dir = to.clone().sub(from);
-      dir.y = 0;
-      const tan = tangent.clone();
-      tan.y = 0;
-      if (dir.lengthSq() < 0.001 || tan.lengthSq() < 0.001) return -1;
-      return dir.normalize().dot(tan.normalize());
+    function nearbyCloudSeed(seedBase, seed, offset) {
+      const radius = clamp(
+        Math.hypot(seedBase.x, seedBase.z) + (random01(seed + offset * 31) - 0.5) * 4,
+        CLOUD_RADIUS_MIN,
+        CLOUD_RADIUS_MAX,
+      );
+      const point = seedBase.clone().setY(0).normalize()
+        .applyAxisAngle(Y_AXIS, (random01(seed + offset * 47) - 0.5) * 0.08)
+        .multiplyScalar(radius);
+      point.y = clamp(seedBase.y + (random01(seed + offset * 59) - 0.5) * 1.2, -radius * 0.17, radius * 0.17);
+      return point;
     }
 
-    // 仿抛物线弹道：初速度沿 vDir（起点切线 = 炮口方向），受恒星重力（指向原点）弯曲。
-    // 把 delta 分解到 vDir 和重力方向，保证 pos(1)=b，重力贡献 t²（后置弯曲，形如抛体）。
-    function parabolaLerp(a, b, vDir, t) {
-      const delta = b.clone().sub(a);
-      const u = vDir.clone().normalize();
-      const w = a.clone().multiplyScalar(-1).normalize(); // 指向恒星（重力方向）
-      if (w.lengthSq() < 1e-4) w.set(0, -1, 0);
-      const ud = u.dot(delta);
-      const wd = w.dot(delta);
-      const c = u.dot(w);
-      const denom = 1 - c * c;
-      let aCoef, gCoef;
-      if (denom < 1e-4) { aCoef = ud; gCoef = 0; }
-      else { aCoef = (ud - c * wd) / denom; gCoef = (wd - c * ud) / denom; }
-      return a.clone()
-        .addScaledVector(u, aCoef * t)
-        .addScaledVector(w, gCoef * t * t);
-    }
-
-    // 抛物线在终点 b 处的切线（供第二段顺接）
-    function parabolaLerpEndTangent(a, b, vDir) {
-      const delta = b.clone().sub(a);
-      const u = vDir.clone().normalize();
-      const w = a.clone().multiplyScalar(-1).normalize();
-      if (w.lengthSq() < 1e-4) w.set(0, -1, 0);
-      const ud = u.dot(delta);
-      const wd = w.dot(delta);
-      const c = u.dot(w);
-      const denom = 1 - c * c;
-      let aCoef, gCoef;
-      if (denom < 1e-4) { aCoef = ud; gCoef = 0; }
-      else { aCoef = (ud - c * wd) / denom; gCoef = (wd - c * ud) / denom; }
-      return new THREE.Vector3(
-        u.x * aCoef + w.x * 2 * gCoef,
-        u.y * aCoef + w.y * 2 * gCoef,
-        u.z * aCoef + w.z * 2 * gCoef,
-      ).normalize();
-    }
-
-    // 抛物线初速度方向：目标方向上叠加**水平向外**的抬高量（不含 y），
-    // 否则 v0 被抬向上→弹道先升后降（完整抛物线开头就斜向上扭）。
-    // 水平抬高 → 半抛物线，开头沿炮口方向直出，重力把它拉弯到目标。
-    function launchDirFor(source, target) {
-      const dir = target.clone().sub(source);
-      const up = source.clone().setY(0).normalize();
-      if (up.lengthSq() < 1e-4) up.set(1, 0, 0);
-      const rise = source.distanceTo(target) * ARC_RISE;
-      dir.addScaledVector(up, rise).normalize();
-      return dir;
-    }
-
-    function swapCloudSeed(a, b) {
-      if (a === b) return;
-      // 种子 xyz 与旋转预算属性成对交换，几何位置下一帧由 updateCloudPositions 重算
-      for (let offset = 0; offset < 3; offset += 1) {
-        const ai = a * 3 + offset, bi = b * 3 + offset;
-        const value = cloudSeedPositions[ai];
-        cloudSeedPositions[ai] = cloudSeedPositions[bi];
-        cloudSeedPositions[bi] = value;
-      }
-      let v = cloudRadius[a]; cloudRadius[a] = cloudRadius[b]; cloudRadius[b] = v;
-      v = cloudCosTheta0[a]; cloudCosTheta0[a] = cloudCosTheta0[b]; cloudCosTheta0[b] = v;
-      v = cloudSinTheta0[a]; cloudSinTheta0[a] = cloudSinTheta0[b]; cloudSinTheta0[b] = v;
-      const bk = cloudBucket[a]; cloudBucket[a] = cloudBucket[b]; cloudBucket[b] = bk;
+    function cloudEntryFor(source, seed, arrivalTime) {
+      return buildShotTrajectory(source, seed, arrivalTime, {
+        arcRise: ARC_RISE,
+        cloudRadiusMin: CLOUD_RADIUS_MIN,
+        cloudRadiusMax: CLOUD_RADIUS_MAX,
+        entryRadius: CLOUD_ENTRY_RADIUS,
+        orbitSpeedForRadius: (radius) => bucketOmega[cloudBucketForRadius(radius)],
+        random01,
+        tangentCos: HORIZONTAL_TANGENT_COS,
+      });
     }
 
     function smoothstep(t) {
@@ -1603,13 +1524,6 @@
 
     function clamp(value, min, max) {
       return Math.max(min, Math.min(max, value));
-    }
-
-    function tangentFor(radial) {
-      // 切线与星球公转同向（angle 递增）：用 radial × (0,1,0)
-      let tangent = new THREE.Vector3().crossVectors(radial, new THREE.Vector3(0, 1, 0));
-      if (tangent.lengthSq() < 0.001) tangent = new THREE.Vector3().crossVectors(radial, new THREE.Vector3(1, 0, 0));
-      return tangent.normalize();
     }
 
     function orientCylinderBetween(mesh, a, b) {
@@ -1976,6 +1890,9 @@
       if (status === "error") return "#ff5c78";
       if (status.includes("waiting")) return "#ffb84d";
       if (status === "tool_calling" || status === "streaming") return "#61dafb";
+      if (status === "receiving_input") return "#c792ea";
+      if (status === "loading_context") return "#82aaff";
+      if (status === "finalizing") return "#f78c6c";
       if (status === "thinking" || status === "running" || status === "compacting" || status === "delegating") return "#f5c56a";
       if (status === "done" || status === "idle") return "#44d19d";
       return "#91a4b8";
@@ -2005,7 +1922,7 @@
     }
 
     function serviceSeconds() {
-      if (!state.serviceDayStartMs) return clock.elapsedTime;
+      if (!state.serviceDayStartMs) return timer.getElapsed();
       return serviceSecondsAt(serviceNowMs());
     }
 
@@ -2122,7 +2039,7 @@
     }
 
     function tamedRotation(speed) {
-      return clock.elapsedTime * speed;
+      return timer.getElapsed() * speed;
     }
 
     function escapeHtml(value) {

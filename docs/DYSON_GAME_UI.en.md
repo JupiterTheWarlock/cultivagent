@@ -13,8 +13,8 @@ The first scene is a Dyson sphere system:
 - The star represents Cultivagent's overall activity today.
 - Dyson clouds represent today's token consumption.
 - Each agent is a planet orbiting the star.
-- Agents fire Dyson clouds toward the cloud ring near the star via surface turrets/factories.
-- Hook events drive the agent state machine; the state machine drives planets, factories, turrets, light effects, and UI feedback.
+- Agent planets launch Dyson clouds from their centers toward the cloud ring; the opaque planet masks the internal segment.
+- Hook events drive the agent state machine; the state machine drives planet surfaces, status rings, atmospheres, light effects, and UI feedback.
 
 Engineering must be modular and swappable: the Dyson scene can later be replaced by another game scene. This is not a marketplace plugin, nor an external plugin system — it is an internal display-module architecture inside the Cultivagent server.
 
@@ -41,10 +41,12 @@ The Dyson scene must not invent its own truth. The client only renders what the 
 
 - Today's total tokens, total Dyson clouds, free clouds, structure blocks.
 - Per-agent state-machine state, accumulated clouds, pending clouds, current batch.
-- Current batch `batch_id`, `started_at`, `cloud_count`, `emitted_clouds`, `emit_rate`, `entry_seed`, `launch_seed`.
+- Current batch `batch_id`, `started_at`, `cloud_count`, `shot_count`, `emitted_clouds`, `emit_rate`, `entry_seed`, `launch_seed`, and `phase`.
 - The server's current time `server_now`, which the client uses to rebuild how far the current batch has emitted and the position/trail of in-flight particles.
 
-The minimal implementation prefers computing `GET /api/dyson/state?day=YYYY-MM-DD` from the existing `events` + `agent_state`, without adding a background tick process. Batches are generated from usage events: `event_id + agent_key` determines the batch ID and random seed; a given agent's batches fire in order, and the next batch waits until the previous one finishes emitting at its rate.
+The minimal implementation computes `GET /api/dyson/state?day=YYYY-MM-DD` from `events` + `agent_state`, without a background tick process. Usage from one agent within a 10-second window is merged into one deterministic batch; the first `event_id + agent_key` determines its ID and seed. Batches fire chronologically. A batch uses at most 100 weighted visual shots, so emission lasts at most 10 seconds while `cloud_value` preserves the full cloud count. Launch phases are `queued → emitting → coasting → settled`, independent from agent work status.
+
+Non-terminal agent status becomes `idle` after five minutes without a newer event. Delayed older events must never overwrite newer `agent_state`.
 
 Only add a persistent table when you need pause, manual replay, cross-day continuation, or batch-geometry correction — e.g. `dyson_batches(day, agent_key, batch_id, event_id, cloud_count, started_at, emit_rate, entry_seed, launch_seed)`. Do not store particles individually; particles are derived from `batch + index + server_now`.
 
@@ -91,44 +93,43 @@ Cloud ring requirements:
 
 These are hard acceptance rules.
 
-Turret mounting:
+Particle source:
 
-- The turret must be mounted on the planet surface.
-- The turret axis must be perpendicular to the planet surface.
-- The muzzle direction must be exactly aligned with the launch direction.
-- The particle's initial velocity must be parallel to the turret axis.
-- Particles must launch from directly in front of the muzzle — never from the side, inside the planet, at the turret base, or from a clipping position.
+- There is no turret or muzzle model.
+- A particle starts at the planet center, remains depth-occluded inside the opaque planet, and becomes visible after crossing the surface.
+- Initial velocity is derived from that shot's maneuver, never from the planet's stale batch-start position.
 
 Batch rules:
 
-- Each batch uses the same target point and launch angle until the pending pool drains.
-- The turret direction aligns to the batch's launch angle.
-- After the pending pool drains, the next batch picks a new target.
+- Every shot derives an independent seed and maneuver from `batch seed + shot index`; batch entry points are never shared.
+- The seed is fixed first, then a same-height maneuver at radius 57 is derived from it.
+- Large batches may use weighted visual shots, but logical cloud counts must be conserved.
 
 First flight segment:
 
-- The first segment starts directly in front of the muzzle and reaches an orbital-entry point near the cloud-ring ecliptic.
-- The first segment must be a straight (or visually straight) particle motion — no twisting.
-- The first segment's ecliptic projection must be within `30°` of the cloud ring's tangent-velocity direction at the entry point.
-- If the current ring rotates clockwise, the first segment must follow the clockwise tangent direction — no injecting against the flow.
+- The first segment starts at the planet center and reaches the radius-57 maneuver.
+- It is a ballistic-style parabola defined by `v0 + t² × starward gravity`, never a Bézier or circular arc.
+- It must hit the maneuver exactly and remain outside the ring's cylindrical outer wall for the entire segment.
+- The ecliptic tangent cross product against the nearest ring tangent must stay positive; invalid candidates must be rejected rather than returned as an unconstrained fallback.
 
 Orbital entry point:
 
-- The entry point is near the cloud-ring ecliptic.
-- It sits close to the ring but should clear the ring's outer radius by a small margin before cutting into the cloud.
+- The maneuver is fixed at `CLOUD_ENTRY_RADIUS = 57`.
+- Its height exactly equals that shot's seed height.
 
 Second flight segment:
 
 - After reaching the entry point, the particle enters second-stage thrust.
 - The second-stage direction's ecliptic projection must also be within `30°` of the ring's tangent-velocity direction there.
 - The second-stage thrust must travel in the prograde direction — not straight toward the center, not retrograde.
-- If a straight line cannot reach the target, first adopt a common orbital radius, then move along the orbit to the target relatively quickly.
+- The second segment is a horizontal cubic Hermite whose start tangent continues segment one and whose end tangent equals the seed's orbital tangent.
+- One projectile and trail continue through both segments; no respawn or teleport is allowed.
 
 Cloud-entry presentation:
 
 - Each emitted particle is a single particle with a short trail.
 - The trail is not a continuously drawn long track line.
-- Particles fade in and out.
+- Particles do not fade during flight; maneuver flashes red and arrival flashes white.
 - When a particle enters the ring, the ring's particle system spawns/reveals a cloud particle at the entry position.
 - This reveal lerps, reading as a tangential orbital entry and joining the revolution.
 
@@ -175,7 +176,7 @@ Base states follow [LOOP_EVENTS.md](./LOOP_EVENTS.md):
 Visual requirements:
 
 - State must not be shown only via ugly text or a single-color ring.
-- The planet surface should have factories, turrets, status lights, pulses, or moving parts.
+- Planet surfaces, status rings, and atmospheres should express state through color, pulse rhythm, or activity effects.
 - `thinking` can read as factory preheating / pulsing.
 - `streaming` can read as a steady energy flow.
 - `tool_calling` can read as factory highlight or multi-point activity.
@@ -210,11 +211,10 @@ Launch acceptance:
 - After a 10k-token request, the agent produces 100 pending clouds.
 - Emit rate is about 10 clouds/s.
 - No auto-emission without a request.
-- The launch angle is fixed within a batch.
-- Particles appear directly in front of the muzzle.
-- Particle initial velocity is parallel to the turret axis.
-- The first segment does not bend, clip, or appear from the side.
-- The ecliptic projections of both segments are within 30° of the ring's tangent velocity.
+- Every shot picks independently; volleys do not collapse onto one line.
+- Particles start at the planet center and become visible after crossing its surface.
+- Segment one is parabolic, hits radius 57 exactly, and never intersects the cloud cylinder.
+- Segment-one tangent cross products stay positive, and segment-two initial thrust is within 30° of the ring tangent.
 - The particle's orbital-entry direction matches the ring's revolution direction.
 
 Layout acceptance:

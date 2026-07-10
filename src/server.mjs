@@ -47,6 +47,10 @@ export function createCultivagentServer(options = {}) {
         return json(res, 401, { error: "unauthorized" });
       }
 
+      if (req.method === "GET" && url.pathname === "/dyson-trajectory.mjs") {
+        return text(res, 200, dysonTrajectorySource(), "text/javascript; charset=utf-8");
+      }
+
       if (req.method === "GET" && url.pathname === "/api/events") {
         return json(res, 200, { events: listEvents(db, eventFilters(url.searchParams)) });
       }
@@ -229,4 +233,8 @@ function dayParam(value) {
 
 function dysonHtml() {
   return readFileSync(new URL("./games/dyson.html", import.meta.url), "utf8");
+}
+
+function dysonTrajectorySource() {
+  return readFileSync(new URL("./games/dyson-trajectory.mjs", import.meta.url), "utf8");
 }
