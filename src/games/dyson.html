@@ -360,7 +360,6 @@
         <button type="button" id="rangeTodayBtn">今天</button>
         <button type="button" id="rangeApplyBtn">应用范围</button>
         <label class="check-row"><span>大气层</span><input id="drawAtmosphere" type="checkbox" checked></label>
-        <label class="check-row"><span>炮塔</span><input id="drawTurrets" type="checkbox" checked></label>
         <label class="check-row"><span>公转轨道</span><input id="drawOrbits" type="checkbox" checked></label>
         <label class="range-row"><span>景深雾</span><input id="drawFog" type="range" min="0" max="0.015" step="0.001" value="0.006"><output id="drawFogValue">0.006</output></label>
         <label class="range-row"><span>恒星亮度</span><input id="drawStarBrightness" type="range" min="0.4" max="2.4" step="0.1" value="1"><output id="drawStarValue">1.0x</output></label>
@@ -413,11 +412,15 @@
     const BASE_ANGULAR_SPEED = 0.06;
     const CLOUD_ORBIT_SPEED = keplerSpeed(CLOUD_RADIUS_MAX);
     const CLOUD_SPEED_BUCKETS = 8; // 云带按半径分桶差速，内快外慢营造流动感
-    const ARC_RISE = 0.35; // 抛物线弹道初速度抬高系数（相对目标距离），越大弹道越高
+    const ARC_RISE = 0.35; // 抛物线初速度抬高系数（相对目标距离），越大弹道越高
     const CLOUD_EMIT_RATE = 10;
-    const SHOT_DURATION = 8.4;
+    const SHOT_PHASE1 = 8.4;        // 段一：source → 机动点（抛物线 v0 + 恒星重力）
+    const INJECTION_DURATION = 1.2; // 段二：机动点 → seed（水平 Hermite）
+    const SHOT_DURATION = SHOT_PHASE1 + INJECTION_DURATION; // 单 obj 连续移动总时长
+    const SHOT_PHASE1_RATIO = SHOT_PHASE1 / SHOT_DURATION;
+    const SHOT_FLASH_TIME = 0.14;   // 机动闪红 / 到达闪白时长（秒）
+    const SHOT_FLASH_RATIO = SHOT_FLASH_TIME / SHOT_DURATION;
     const MAX_ACTIVE_SHOTS = 96;
-    const INJECTION_DURATION = 1.2;
     const SKY_STAR_COUNT = 1800;
     const SKY_SPHERE_RADIUS = 720;
     const STAR_LIGHT_BASE = 1200;
@@ -442,7 +445,6 @@
       rangeTodayBtn: document.getElementById("rangeTodayBtn"),
       rangeApplyBtn: document.getElementById("rangeApplyBtn"),
       drawAtmosphere: document.getElementById("drawAtmosphere"),
-      drawTurrets: document.getElementById("drawTurrets"),
       drawOrbits: document.getElementById("drawOrbits"),
       drawFog: document.getElementById("drawFog"),
       drawFogValue: document.getElementById("drawFogValue"),
@@ -491,7 +493,7 @@
       cameraTarget: new THREE.Vector3(0, 0, 0),
       lastPointer: { x: 0, y: 0 },
       range: { liveToday: true, startMs: 0, endMs: 0 },
-      draw: { atmosphere: true, turrets: true, orbits: true, fogDensity: 0.006, starBrightness: 1 },
+      draw: { atmosphere: true, orbits: true, fogDensity: 0.006, starBrightness: 1 },
     };
 
     const renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: "high-performance" });
@@ -517,9 +519,196 @@
     const starLight = new THREE.PointLight(0xffcc77, STAR_LIGHT_BASE, 360, 1.7);
     scene.add(starLight);
 
+    // 统一天体生成器（测试版）：恒星/行星共用同一 ShaderMaterial
+    // 设计要点：
+    //   - 噪声用 3D solid Worley，按物体空间位置采样 → 全曲面连续、无极点挤压
+    //   - vPos = position（物体空间）→ 表面纹理随 mesh 旋转自然转动
+    //   - 无像素化，调色板走 smoothstep 软过渡（匹配柔化后的星空风格）
+    //   - uMode：0=恒星（自发光+临边昏暗）；1=气态 2=类地 3=岩质 4=冰雪（均朝恒星 Lambert）
+    //   - 预设见 presets；新增行星只需 makeCelestialMaterial({ type })，不用换 shader
+    function makeCelestialMaterial(opts = {}) {
+      const type = opts.type || "star";
+      // 预设：每种类型一套 mode/调色板/参数。仿 PixelPlanets，但为真 3D 球体贴图
+      const presets = {
+        star:   { mode: 0, palette: [[0.30, 0.06, 0.02], [0.65, 0.16, 0.03], [1.00, 0.45, 0.12], [1.00, 0.70, 0.28], [1.00, 0.93, 0.70]], noiseScale: 3.5, flowSpeed: 0.06, bandFreq: 6.0 },
+        gas:    { mode: 1, palette: [[0.18, 0.10, 0.32], [0.50, 0.26, 0.52], [0.82, 0.50, 0.42], [0.94, 0.74, 0.54], [0.98, 0.90, 0.78]], noiseScale: 2.5, flowSpeed: 0.05, bandFreq: 9.0 },
+        terran: { mode: 2, palette: [[0.02, 0.09, 0.28], [0.06, 0.32, 0.55], [0.18, 0.42, 0.18], [0.50, 0.42, 0.22], [0.95, 0.97, 0.98]], noiseScale: 3.0, flowSpeed: 0.02, bandFreq: 0.0 },
+        rocky:  { mode: 3, palette: [[0.12, 0.10, 0.09], [0.32, 0.27, 0.22], [0.50, 0.43, 0.35], [0.66, 0.58, 0.48], [0.80, 0.73, 0.64]], noiseScale: 5.0, flowSpeed: 0.0, bandFreq: 0.0 },
+        ice:    { mode: 4, palette: [[0.10, 0.20, 0.34], [0.36, 0.56, 0.76], [0.62, 0.80, 0.93], [0.82, 0.91, 0.97], [0.96, 0.98, 1.00]], noiseScale: 4.0, flowSpeed: 0.0, bandFreq: 0.0 },
+      };
+      const preset = presets[type] || presets.star;
+      const palette = opts.palette !== undefined ? opts.palette : preset.palette;
+      const noiseScale = opts.noiseScale !== undefined ? opts.noiseScale : preset.noiseScale;
+      const flowSpeed = opts.flowSpeed !== undefined ? opts.flowSpeed : preset.flowSpeed;
+      const bandFreq = opts.bandFreq !== undefined ? opts.bandFreq : preset.bandFreq;
+      const seed = opts.seed !== undefined ? opts.seed : 1.0 + preset.mode * 0.7;
+
+      return new THREE.ShaderMaterial({
+        uniforms: {
+          uTime: { value: 0 },
+          uColors: { value: palette.map((c) => new THREE.Vector3(c[0], c[1], c[2])) },
+          uNoiseScale: { value: noiseScale },
+          uFlowSpeed: { value: flowSpeed },
+          uSeed: { value: seed },
+          uLightDir: { value: new THREE.Vector3(0.6, 0.5, 0.8).normalize() },
+          uMode: { value: preset.mode },
+          uBandFreq: { value: bandFreq },
+        },
+        vertexShader: `
+          varying vec3 vPos;
+          varying vec3 vWorldPos;
+          varying vec3 vWorldNormal;
+          void main() {
+            vPos = position;
+            vWorldPos = (modelMatrix * vec4(position, 1.0)).xyz;
+            vWorldNormal = normalize(mat3(modelMatrix) * normal);
+            gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+          }
+        `,
+        fragmentShader: `
+          varying vec3 vPos;
+          varying vec3 vWorldPos;
+          varying vec3 vWorldNormal;
+          uniform float uTime;
+          uniform vec3 uColors[5];
+          uniform float uNoiseScale;
+          uniform float uFlowSpeed;
+          uniform float uSeed;
+          uniform vec3 uLightDir;
+          uniform int uMode;
+          uniform float uBandFreq;
+
+          vec3 hash33(vec3 p) {
+            p = vec3(dot(p, vec3(127.1, 311.7, 74.7)),
+                     dot(p, vec3(269.5, 183.3, 246.1)),
+                     dot(p, vec3(113.5, 271.9, 124.6)));
+            return fract(sin(p) * 43758.5453123);
+          }
+
+          // 3D Worley F1：返回到最近细胞中心的距离
+          float worley3(vec3 p) {
+            vec3 i = floor(p);
+            vec3 f = fract(p);
+            float minD = 1.0;
+            for (int x = -1; x <= 1; x++)
+            for (int y = -1; y <= 1; y++)
+            for (int z = -1; z <= 1; z++) {
+              vec3 g = vec3(float(x), float(y), float(z));
+              vec3 o = hash33(i + g + uSeed);
+              o = 0.5 + 0.5 * sin(o * 6.2831 + uTime * 0.5);
+              vec3 d = g + o - f;
+              minD = min(minD, dot(d, d));
+            }
+            return sqrt(minD);
+          }
+
+          float hash13(vec3 p) {
+            return fract(sin(dot(p, vec3(127.1, 311.7, 74.7))) * 43758.5453123);
+          }
+
+          // 3D value noise（气态条带 / 类地大陆 / 冰雪基底）
+          float noise3(vec3 p) {
+            vec3 i = floor(p);
+            vec3 f = fract(p);
+            vec3 u = f * f * (3.0 - 2.0 * f);
+            float n000 = hash13(i + vec3(0.0, 0.0, 0.0));
+            float n100 = hash13(i + vec3(1.0, 0.0, 0.0));
+            float n010 = hash13(i + vec3(0.0, 1.0, 0.0));
+            float n110 = hash13(i + vec3(1.0, 1.0, 0.0));
+            float n001 = hash13(i + vec3(0.0, 0.0, 1.0));
+            float n101 = hash13(i + vec3(1.0, 0.0, 1.0));
+            float n011 = hash13(i + vec3(0.0, 1.0, 1.0));
+            float n111 = hash13(i + vec3(1.0, 1.0, 1.0));
+            return mix(mix(mix(n000, n100, u.x), mix(n010, n110, u.x), u.y),
+                       mix(mix(n001, n101, u.x), mix(n011, n111, u.x), u.y), u.z);
+          }
+
+          float fbm3(vec3 p) {
+            float v = 0.0;
+            float a = 0.5;
+            for (int i = 0; i < 5; i++) {
+              v += a * noise3(p);
+              p *= 2.0;
+              a *= 0.5;
+            }
+            return v;
+          }
+
+          // 5 色 smoothstep 梯度（软过渡）
+          vec3 palette(float t) {
+            t = clamp(t, 0.0, 1.0);
+            vec3 c = mix(uColors[0], uColors[1], smoothstep(0.0, 0.25, t));
+            c = mix(c, uColors[2], smoothstep(0.25, 0.5, t));
+            c = mix(c, uColors[3], smoothstep(0.5, 0.75, t));
+            c = mix(c, uColors[4], smoothstep(0.75, 1.0, t));
+            return c;
+          }
+
+          void main() {
+            vec3 sp = normalize(vPos);
+            vec3 p = sp * uNoiseScale;
+            vec3 flow = vec3(0.0, 0.0, uTime * uFlowSpeed);
+            vec3 col = vec3(0.0);
+            float t = 0.0;
+
+            if (uMode == 0) {
+              // 恒星：双层 Worley 颗粒对流
+              float n1 = worley3(p + flow);
+              float n2 = worley3(p * 2.0 + flow * 1.7 + 11.3);
+              t = 1.0 - smoothstep(0.15, 0.9, n1 * n2);
+              col = palette(t);
+            } else if (uMode == 1) {
+              // 气态：纬度条带 + FBM 扰动 + 风暴涡旋
+              float warp = fbm3(sp * 2.5 + flow) * 0.5;
+              float bands = sin((sp.y + warp) * uBandFreq) * 0.5 + 0.5;
+              float storm = fbm3(sp * 4.0 + flow * 2.0) * 0.25;
+              t = clamp(bands + storm, 0.0, 1.0);
+              col = palette(t);
+            } else if (uMode == 2) {
+              // 类地：FBM 大陆/海洋 + 极冠
+              float h = fbm3(p + flow);
+              float sea = 0.5;
+              if (h < sea) {
+                col = mix(uColors[0], uColors[1], smoothstep(0.0, sea, h));
+              } else {
+                col = mix(uColors[2], uColors[3], smoothstep(sea, 0.95, h));
+              }
+              float ice = smoothstep(0.72, 0.92, abs(sp.y));
+              col = mix(col, uColors[4], ice);
+            } else if (uMode == 3) {
+              // 岩质：陨石坑（Worley）+ FBM 基底
+              float craters = worley3(p + uSeed);
+              float base = fbm3(sp * (uNoiseScale * 0.5) + flow * 0.2);
+              t = clamp(base * 0.55 + (1.0 - smoothstep(0.0, 0.45, craters)) * 0.45, 0.0, 1.0);
+              col = palette(t);
+            } else {
+              // 冰雪：FBM 基底 + 冰裂（Worley 边缘）
+              float base = fbm3(sp * 2.5 + flow);
+              float cracks = worley3(p + uSeed * 1.7);
+              t = clamp(base + (1.0 - smoothstep(0.1, 0.4, cracks)) * 0.25, 0.0, 1.0);
+              col = palette(t);
+            }
+
+            if (uMode == 0) {
+              // 恒星自发光 + 轻微临边昏暗
+              float limb = max(dot(normalize(vWorldNormal),
+                                   normalize(cameraPosition - vWorldPos)), 0.0);
+              col *= mix(0.62, 1.0, pow(limb, 0.45));
+            } else {
+              // 行星：朝恒星方向的 Lambert（uLightDir 由 JS 每帧设为 -normalize(worldPos)）
+              float ndl = clamp(dot(normalize(vWorldNormal), normalize(uLightDir)), 0.0, 1.0);
+              col *= 0.10 + 0.90 * ndl;
+            }
+
+            gl_FragColor = vec4(col, 1.0);
+          }
+        `,
+      });
+    }
+
     const star = new THREE.Mesh(
-      new THREE.SphereGeometry(13, 64, 32),
-      new THREE.MeshBasicMaterial({ color: 0xffb347 })
+      new THREE.SphereGeometry(13, 64, 64),
+      makeCelestialMaterial({ noiseScale: 3.5, flowSpeed: 0.06 })
     );
     star.userData.kind = "star";
     scene.add(star);
@@ -564,11 +753,8 @@
     const planetMeshes = [];
     const trailGeometry = new THREE.CylinderGeometry(0.08, 0.02, 1, 8);
     const projectileGeometry = new THREE.SphereGeometry(0.22, 12, 8);
-    const injectedCloudGeometry = new THREE.SphereGeometry(0.18, 8, 6);
-    const muzzleGeometry = new THREE.CylinderGeometry(0.8, 1.05, 2.4, 12);
     const ringGeometry = new THREE.TorusGeometry(1, 0.04, 8, 48);
     const atmosphereGeometry = new THREE.SphereGeometry(1, 24, 16);
-    const injectedClouds = [];
 
     renderer.setAnimationLoop(animate);
     window.addEventListener("resize", onResize);
@@ -581,7 +767,7 @@
     window.addEventListener("dblclick", resetCamera);
     els.rangeTodayBtn.addEventListener("click", useTodayRange);
     els.rangeApplyBtn.addEventListener("click", applyRange);
-    for (const input of [els.drawAtmosphere, els.drawTurrets, els.drawOrbits, els.drawFog, els.drawStarBrightness]) {
+    for (const input of [els.drawAtmosphere, els.drawOrbits, els.drawFog, els.drawStarBrightness]) {
       input.addEventListener("input", readDrawPrefs);
     }
     els.debugStructureBtn.addEventListener("click", postDebugStructure);
@@ -601,7 +787,6 @@
       advanceCloudCount(dt);
       updateDysonShell(t);
       updatePlanets(t, dt);
-      updateInjectedClouds(dt);
       updateCamera(t);
       updateHover();
       renderHud();
@@ -702,13 +887,12 @@
         planet.mesh.rotation.x = Math.sin(t * 0.4 + planet.index) * 0.12;
         const world = new THREE.Vector3();
         planet.mesh.getWorldPosition(world);
-        // 先驱动发射（spawnCloudShot 设 lastShotDir），再让炮口模型适配最新 v0
+        const pmat = planet.mesh.material;
+        pmat.uniforms.uTime.value = t;
+        pmat.uniforms.uLightDir.value.copy(world).normalize().negate();
         syncServiceShots(planet);
         updateEmissionQueue(planet, world, dt);
-        const entry = planet.batchEntry || cloudEntryFor(world, planet.emitSeed);
-        const launchDir = planet.lastShotDir || launchDirFor(world, entry.target);
-        const mount = world.clone().addScaledVector(launchDir, planet.size * 1.25);
-        updateFactory(planet, mount, launchDir, t);
+        updatePlanetVisual(planet, t);
         updateShots(planet, dt);
       }
     }
@@ -724,6 +908,7 @@
       camera.lookAt(state.cameraTarget);
       skySphere.position.copy(camera.position);
       star.rotation.y = t * 0.09;
+      star.material.uniforms.uTime.value = t;
       corona.rotation.y = -t * 0.045;
       corona.rotation.z = t * 0.025;
     }
@@ -783,7 +968,6 @@
 
     function readDrawPrefs() {
       state.draw.atmosphere = els.drawAtmosphere.checked;
-      state.draw.turrets = els.drawTurrets.checked;
       state.draw.orbits = els.drawOrbits.checked;
       state.draw.fogDensity = Number(els.drawFog.value) || 0;
       state.draw.starBrightness = Number(els.drawStarBrightness.value) || 1;
@@ -801,7 +985,6 @@
 
     function applyPlanetDrawPrefs(planet) {
       planet.atmosphere.visible = state.draw.atmosphere;
-      planet.factory.visible = state.draw.turrets;
       planet.orbit.visible = state.draw.orbits;
     }
 
@@ -881,17 +1064,12 @@
       state.agentCloudTargets.clear();
       state.serviceSeeded = false;
       for (const planet of planets.values()) clearPlanetShots(planet);
-      injectedClouds.splice(0).forEach((cloud) => {
-        scene.remove(cloud.mesh);
-        cloud.mesh.material.dispose();
-      });
     }
 
     function hasReplayWork() {
       for (const pending of state.pendingByAgent.values()) {
         if (pending > 0) return true;
       }
-      if (injectedClouds.length) return true;
       for (const planet of planets.values()) {
         if (planet.shots.length) return true;
       }
@@ -926,7 +1104,6 @@
         if (nextKeys.has(key)) continue;
         root.remove(planet.pivot);
         root.remove(planet.orbit);
-        scene.remove(planet.factory);
         scene.remove(planet.statusRing);
         planet.orbit.geometry.dispose();
         planet.orbit.material.dispose();
@@ -978,6 +1155,9 @@
       );
     }
 
+    // 行星类型轮转：按 index 分配生成器类型（仿 PixelPlanets，3D 球面版）
+    const PLANET_TYPES = ["gas", "terran", "rocky", "ice"];
+
     function createPlanet(key, index) {
       const radius = CLOUD_RADIUS_MAX + 24 + (index % 9) * 18 + Math.floor(index / 9) * 8;
       const size = 2.2 + (index % 5) * 0.28;
@@ -989,14 +1169,8 @@
       root.add(pivot);
 
       const mesh = new THREE.Mesh(
-        new THREE.SphereGeometry(size, 24, 16),
-        new THREE.MeshStandardMaterial({
-          color,
-          emissive: color,
-          emissiveIntensity: 0.42,
-          roughness: 0.62,
-          metalness: 0.12,
-        })
+        new THREE.SphereGeometry(size, 48, 32),
+        makeCelestialMaterial({ type: PLANET_TYPES[index % PLANET_TYPES.length], seed: 1.0 + index * 0.37 })
       );
       mesh.position.copy(planetOrbitPosition({ radius, baseAngle, speed, inclination }, 0));
       mesh.userData.kind = "planet";
@@ -1023,18 +1197,6 @@
       orbit.rotation.x = inclination;
       root.add(orbit);
 
-      const factory = new THREE.Group();
-      const base = new THREE.Mesh(
-        new THREE.BoxGeometry(1.8, 1.0, 1.2),
-        new THREE.MeshBasicMaterial({ color: 0x83e8ff, transparent: true, opacity: 0.82 })
-      );
-      const muzzle = new THREE.Mesh(
-        muzzleGeometry,
-        new THREE.MeshBasicMaterial({ color: 0xb9f6ff, transparent: true, opacity: 0.86 })
-      );
-      factory.add(base, muzzle);
-      scene.add(factory);
-
       const statusRing = new THREE.Mesh(
         ringGeometry,
         new THREE.MeshBasicMaterial({ color: 0x61dafb, transparent: true, opacity: 0.0, depthWrite: false, blending: THREE.AdditiveBlending })
@@ -1042,20 +1204,19 @@
       scene.add(statusRing);
 
       const planet = {
-        key, index, pivot, mesh, atmosphere, orbit, factory, base, muzzle, statusRing,
+        key, index, pivot, mesh, atmosphere, orbit, statusRing,
         radius, size, speed, baseAngle, inclination, color, shots: [], shotIds: new Set(),
-        emitAccumulator: 0, emitSeed: 0, batchEntry: null, lastShotDir: null, serviceDriven: false, serviceBatches: [],
+        emitAccumulator: 0, emitSeed: 0, batchEntry: null, serviceDriven: false, serviceBatches: [],
       };
       applyPlanetDrawPrefs(planet);
       return planet;
     }
 
-    function updateFactory(planet, source, launchDir, t) {
+    // 行星视觉更新：颜色 / 状态环 / 大气 / 轨道。无炮塔——粒子从球心出发（见 spawnCloudShot）。
+    function updatePlanetVisual(planet, t) {
       const status = planet.status || "idle";
       const color = new THREE.Color(statusColor(status));
       planet.color.copy(color);
-      planet.base.material.color.copy(color);
-      planet.muzzle.material.color.copy(color);
       planet.statusRing.material.color.copy(color);
       planet.atmosphere.material.color.copy(color);
       planet.orbit.material.color.copy(color);
@@ -1067,15 +1228,6 @@
       planet.statusRing.position.copy(planet.mesh.getWorldPosition(new THREE.Vector3()));
       planet.statusRing.scale.setScalar(planet.size * 1.65);
       planet.statusRing.quaternion.copy(camera.quaternion);
-
-      const dir = launchDir.clone().normalize();
-      planet.factory.position.copy(source);
-      planet.factory.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir);
-      planet.base.position.set(0, -0.2, 0);
-      planet.muzzle.position.set(0, 1.15, 0);
-      const hot = (state.pendingByAgent.get(planet.key) || state.servicePendingByAgent.get(planet.key) || 0) > 0 || status === "tool_calling";
-      planet.muzzle.material.opacity = hot ? 0.96 : 0.55;
-      planet.factory.scale.setScalar(planet.size * 0.45);
     }
 
     function updateEmissionQueue(planet, source, dt) {
@@ -1133,7 +1285,8 @@
       });
     }
 
-    // planetCenter = 行星球心（世界坐标）；内部按 target 算 v0 和炮口尖端 source
+    // planetCenter = 行星球心（世界坐标）；机动点取 entry.target（入轨壁上，不旋转预测角）。
+    // 单 obj 两段连续轨迹：段一抛物线 source → 机动点；段二在相位切换时解析 seed 后水平接入。
     function spawnCloudShot(planet, planetCenter, entry, options = {}) {
       const color = planet.color.clone();
       const projectile = new THREE.Mesh(
@@ -1148,28 +1301,27 @@
       trail.frustumCulled = false;
       scene.add(projectile, trail);
 
-      // target 取 entry 机动点（入轨壁+对应高度），按云流动预测到到达时刻，避免飞行期间脱靶
-      const remainDuration = (1 - Number(options.progress || 0)) * SHOT_DURATION;
-      const predictAngle = keplerSpeed(entry.entryRadius || CLOUD_ENTRY_RADIUS) * remainDuration;
-      const target = entry.target.clone().applyAxisAngle(new THREE.Vector3(0, 1, 0), predictAngle);
-      // 抛物线初速度 v0：朝 target + 抬高（远离恒星），每发随 target 变化
-      const v0 = launchDirFor(planetCenter, target);
-      // source（炮口尖端）= 球心 + v0 偏移，反向指向球心；粒子从炮口正前方出发
-      const muzzleOffset = planet.size * 2.3075 + 0.42;
-      const source = planetCenter.clone().addScaledVector(v0, muzzleOffset);
-      // 炮口模型跟踪最后发射方向（时刻对齐 v0）
-      planet.lastShotDir = v0.clone();
-      // 第一段终点切线，作为第二段起点切线（顺接），也用于 nextCloudTarget 选 seed 方向
-      const endTangent = parabolaLerpEndTangent(source, target, v0);
+      // 机动点 = entry.target（入轨壁半径 + 对应高度），不叠加预测角旋转 —— 旋转会打散角度让弹道乱飞
+      const maneuver = entry.target.clone();
+      // 抛物线初速度 v0：朝机动点 + 水平抬高（远离恒星），每发随机动点变化
+      const v0 = launchDirFor(planetCenter, maneuver);
+      // 无炮塔：粒子直接从星球球心出发，v0 决定方向。source = 球心。
+      const source = planetCenter.clone();
+      // 段一终点切线 = 段二起点切线（G1 顺接），并用于 nextCloudTarget 的前向偏置
+      const tangentManeuver = parabolaLerpEndTangent(source, maneuver, v0);
       const shot = {
         id: options.id || "",
         progress: Number(options.progress || 0),
         emittedAtMs: Number(options.emittedAtMs || 0),
+        phase: 1,
         source,
-        target,
-        launchDir: v0,
+        maneuver,
+        seed: null,            // 段一→段二切换时由 nextCloudTarget 解析
         tangent1: v0,
-        tangent: endTangent,
+        tangentManeuver,
+        tangentSeed: null,
+        flashRed: 0,
+        color,
         projectile,
         trail,
       };
@@ -1184,34 +1336,29 @@
         shot.progress = shot.emittedAtMs
           ? Math.min(1, Math.max(shot.progress, (serviceNowMs() - shot.emittedAtMs) / (SHOT_DURATION * 1000)))
           : Math.min(1, shot.progress + dt / SHOT_DURATION);
-        const fade = Math.min(1, shot.progress / 0.14); // 仅渐入，接近机动点不淡出（为闪红留亮度）
-        const eased = smoothstep(shot.progress);
-        const prevEase = smoothstep(Math.max(0, shot.progress - 0.018));
-        const pos = parabolaLerp(shot.source, shot.target, shot.tangent1, eased);
-        const prev = parabolaLerp(shot.source, shot.target, shot.tangent1, prevEase);
-        shot.projectile.position.copy(pos);
-        shot.projectile.material.opacity = 0.88 * fade;
-        shot.projectile.scale.setScalar(0.72 + fade * 0.28);
 
-        // 接近机动点闪红
-        if (shot.progress > 0.88) {
-          const k = (shot.progress - 0.88) / 0.12;
-          shot.projectile.material.color.setRGB(
-            THREE.MathUtils.lerp(planet.color.r, 1, k),
-            THREE.MathUtils.lerp(planet.color.g, 0.25, k),
-            THREE.MathUtils.lerp(planet.color.b, 0.25, k),
-          );
+        // 段一 → 段二切换：解析 seed 落点 + 机动闪红。同一 obj 连续移动，不传送、不重生。
+        if (shot.phase < 2 && shot.progress >= SHOT_PHASE1_RATIO) {
+          shot.phase = 2;
+          const cloudTarget = nextCloudTarget(shot.maneuver, shot.tangentManeuver);
+          shot.seed = cloudTarget.world;
+          shot.tangentSeed = tangentFor(shot.seed.clone().setY(0).normalize());
+          shot.flashRed = SHOT_FLASH_TIME;
         }
+
+        const pos = shotPosition(shot, shot.progress);
+        const prev = shotPosition(shot, Math.max(0, shot.progress - 0.018));
+        shot.projectile.position.copy(pos);
+        updateShotAppearance(shot, dt);
 
         if (shot.progress < 0.025) {
           shot.trail.material.opacity = 0;
         } else {
           orientCylinderBetween(shot.trail, prev, pos);
-          shot.trail.material.opacity = 0.46 * fade;
         }
 
         if (shot.progress >= 1) {
-          spawnInjectedCloud(shot.target, shot.tangent, planet.color);
+          commitCloudPoint();
           removeShotAt(planet, i);
         }
       }
@@ -1227,68 +1374,77 @@
       if (shot.id) planet.shotIds.delete(shot.id);
     }
 
-    function spawnInjectedCloud(target, tangent, color) {
-      const cloudTarget = nextCloudTarget(target, tangent);
-      const baseColor = color.clone();
-      const material = new THREE.MeshBasicMaterial({
-        color: baseColor.clone(),
-        transparent: true,
-        opacity: 0.82,
-        depthWrite: false,
-        blending: THREE.AdditiveBlending,
-      });
-      const mesh = new THREE.Mesh(injectedCloudGeometry, material);
-      mesh.frustumCulled = false;
-      mesh.position.copy(target);
-      scene.add(mesh);
-      injectedClouds.push({
-        mesh,
-        start: target.clone(),
-        targetWorld: cloudTarget.world,
-        tangent: tangent.clone().normalize(),
-        age: 0,
-        baseColor,
-        flashRed: 0.14, // 机动瞬间闪红
-      });
+    // 单 obj 两段位置：段一抛物线 source → 机动点；段二水平 Hermite 机动点 → seed
+    function shotPosition(shot, progress) {
+      if (progress < SHOT_PHASE1_RATIO || !shot.seed) {
+        const t1 = Math.min(1, progress / SHOT_PHASE1_RATIO);
+        return parabolaLerp(shot.source, shot.maneuver, shot.tangent1, smoothstep(t1));
+      }
+      const t2 = (progress - SHOT_PHASE1_RATIO) / (1 - SHOT_PHASE1_RATIO);
+      return horizontalHermite(shot.maneuver, shot.seed, shot.tangentManeuver, shot.tangentSeed, smoothstep(t2));
     }
 
-    function updateInjectedClouds(dt) {
-      for (let i = injectedClouds.length - 1; i >= 0; i -= 1) {
-        const cloud = injectedClouds[i];
-        cloud.age += dt;
-        const p = Math.min(1, cloud.age / INJECTION_DURATION);
-        const eased = smoothstep(p);
-        cloud.mesh.position.copy(parabolaLerp(cloud.start, cloud.targetWorld, cloud.tangent, eased));
-        cloud.mesh.scale.setScalar(0.9 - eased * 0.28);
-        const mat = cloud.mesh.material;
-        const base = cloud.baseColor;
-        // 机动瞬间闪红（前 0.14s），lerp 回原色
-        if (cloud.flashRed > 0) {
-          cloud.flashRed = Math.max(0, cloud.flashRed - dt);
-          const k = cloud.flashRed / 0.14;
-          mat.color.setRGB(
-            THREE.MathUtils.lerp(base.r, 1, k),
-            THREE.MathUtils.lerp(base.g, 0.25, k),
-            THREE.MathUtils.lerp(base.b, 0.25, k),
-          );
-        }
-        // 到达瞬间闪白（最后 15%），不淡出仅提亮
-        if (p > 0.85) {
-          const k = (p - 0.85) / 0.15;
-          mat.opacity = 0.82 + 0.18 * k;
-          mat.color.setRGB(
-            THREE.MathUtils.lerp(base.r, 1, k),
-            THREE.MathUtils.lerp(base.g, 1, k),
-            THREE.MathUtils.lerp(base.b, 1, k),
-          );
-        }
-        if (p >= 1) {
-          commitCloudPoint();
-          scene.remove(cloud.mesh);
-          cloud.mesh.material.dispose();
-          injectedClouds.splice(i, 1);
-        }
+    // 水平面 Hermite：p0 → p1 同高度（y 不变），起切线顺接段一终点切线（投影水平），
+    // 终切线 = seed 公转切线 → 第二段水平、顺公转入轨，且与第一段 G1 连续。
+    function horizontalHermite(p0, p1, t0, t1, t) {
+      const tt = t * t, ttt = tt * t;
+      const h00 = 2 * ttt - 3 * tt + 1;
+      const h10 = ttt - 2 * tt + t;
+      const h01 = -2 * ttt + 3 * tt;
+      const h11 = ttt - tt;
+      const chord = Math.max(0.001, Math.hypot(p1.x - p0.x, p1.z - p0.z));
+      const m0l = Math.max(1e-4, Math.hypot(t0.x, t0.z));
+      const m1l = Math.max(1e-4, Math.hypot(t1.x, t1.z));
+      return new THREE.Vector3(
+        h00 * p0.x + h01 * p1.x + chord * (h10 * t0.x / m0l + h11 * t1.x / m1l),
+        p0.y,
+        h00 * p0.z + h01 * p1.z + chord * (h10 * t0.z / m0l + h11 * t1.z / m1l),
+      );
+    }
+
+    // 单 obj 外观：渐入不淡出；机动闪红 → 到达闪白；段二收尾缩小融入云环
+    function updateShotAppearance(shot, dt) {
+      const mat = shot.projectile.material;
+      const base = shot.color;
+      const fadeIn = Math.min(1, shot.progress / SHOT_FLASH_RATIO);
+
+      // 缩放：段一渐入放大到 1，段二收尾缩小融入云环
+      if (shot.phase >= 2 && shot.seed) {
+        const t2 = smoothstep((shot.progress - SHOT_PHASE1_RATIO) / (1 - SHOT_PHASE1_RATIO));
+        shot.projectile.scale.setScalar(THREE.MathUtils.lerp(1, 0.62, t2));
+      } else {
+        shot.projectile.scale.setScalar(0.72 + fadeIn * 0.28);
       }
+
+      // 颜色：机动闪红（段二前 SHOT_FLASH_TIME）→ 基色 → 到达闪白（末 SHOT_FLASH_TIME）
+      if (shot.flashRed > 0) {
+        shot.flashRed = Math.max(0, shot.flashRed - dt);
+        const k = shot.flashRed / SHOT_FLASH_TIME;
+        mat.color.setRGB(
+          THREE.MathUtils.lerp(base.r, 1, k),
+          THREE.MathUtils.lerp(base.g, 0.25, k),
+          THREE.MathUtils.lerp(base.b, 0.25, k),
+        );
+      } else if (shot.progress > 1 - SHOT_FLASH_RATIO) {
+        const k = (shot.progress - (1 - SHOT_FLASH_RATIO)) / SHOT_FLASH_RATIO;
+        mat.color.setRGB(
+          THREE.MathUtils.lerp(base.r, 1, k),
+          THREE.MathUtils.lerp(base.g, 1, k),
+          THREE.MathUtils.lerp(base.b, 1, k),
+        );
+      } else {
+        mat.color.copy(base);
+      }
+
+      // 不透明度：仅渐入不淡出，到达闪白略提亮
+      let opacity = 0.88 * fadeIn;
+      if (shot.progress > 1 - SHOT_FLASH_RATIO) {
+        const k = (shot.progress - (1 - SHOT_FLASH_RATIO)) / SHOT_FLASH_RATIO;
+        opacity = Math.min(1, 0.88 + 0.12 * k);
+      }
+      mat.opacity = opacity;
+      shot.trail.material.color.copy(mat.color);
+      shot.trail.material.opacity = shot.progress < 0.025 ? 0 : 0.46 * fadeIn;
     }
 
     function commitCloudPoint() {

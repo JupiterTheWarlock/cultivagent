@@ -27,12 +27,12 @@
    - **高度 = seed 高度**（垂直选点：在最终目标点对应高度的外径壁上取点，保证第二段运动平行黄道面）
    - 角度 `α_m` 选在 seed 的公转前方，使第二段终点切线能顺接 seed 的公转切线
 
-## 3. 炮口与初速度
+## 3. 粒子源与初速度
 
-- 炮口模型**时刻对齐**当前发射方向：`factory.quaternion` 每帧朝本次发射的 `v0`
-- 初速度 `v0` **随目标点变化**（每发独立）：`v0 = launchDirFor(source, target)`
-- `source`（炮口尖端）= 球心 + `v0` 方向偏移；**`source` 沿 `v0` 反向必须指向行星球心**
-- 粒子从炮口正前方射出，**禁止横向射出、穿模、从炮管壁或行星内部出发**
+- **无炮塔/炮口模型**（曾用 cylinder 炮口对齐 v0，但炮口粗、粒子细，角度差一点就显成"粒子穿炮壁"；已整体删除炮塔）。粒子**直接从星球球心出发**：`source = planetCenter`（无偏移）
+- 初速度 `v0` **随机动点变化**（每发独立）：`v0 = launchDirFor(source, maneuver)`，其中 `maneuver = entry.target`
+- **机动点直接取 `entry.target`，禁止再叠加任何预测角旋转**（曾用 `applyAxisAngle(Y, keplerSpeed×duration)` 把机动点甩到行星前方 46°–99°，14 步候选角度全被打散，弹道看起来乱飞、落点不在圆环上）
+- 粒子在星球内部（不透明球面之后）自然被深度测试遮挡，穿出球面后显现，视觉上等同"从星球表面射出"
 
 ## 4. 第一段：仿抛物线（source → 机动点）
 
@@ -51,29 +51,39 @@ pos(t) = source + a·t·v0 + b·t²·(指向恒星)
 
 ## 5. 第二段：机动点 → seed
 
-- 同高度（`seed.y`），运动**平行黄道面**（水平）
-- 终点速度 = seed 处的**公转切线方向**（叉积为正，顺公转入轨）
+**第一段与第二段是同一个 obj 的连续移动**（一个 `shot`，progress `0 → 1`），**禁止"段一 obj 销毁 + 新建段二 obj"式的强制位移/重生**。段二在 progress 跨过 `SHOT_PHASE1_RATIO` 时切换：
+
+- 解析 seed 落点（`nextCloudTarget`），得到 `shot.seed` 与 `shot.tangentSeed`
+- 机动闪红（见 §6）
+- 位置函数从抛物线切到水平 Hermite
+
+段二轨迹 = **水平面 cubic Hermite**（`horizontalHermite`）：
+
+- **同高度**（`y = maneuver.y = seed.y`，y 不变 → 平行黄道面）
+- 起切线 = 段一终点切线投影到水平面（`tangentManeuver`）→ **与段一 G1 连续**，无折角
+- 终切线 = seed 处公转切线（`tangentSeed = tangentFor(seedRadial)`，叉积为正，顺公转入轨）
 - **禁止**直冲圆心、反向飞
 - 机动角度 < `30°`（推进方向与该处云环切线速度方向的夹角）
-- 若直线无法到达，先并入公转半径，再沿公转轨道切到目标点
+- 若直线无法到达，Hermite 自然内弯到 seed（等价于"先并入公转半径再切到目标"）
 
 ## 6. 颜色与视觉
 
 - 机动瞬间（第一段→第二段切换）**闪烁红色** ~0.14s
 - 到达 seed 瞬间**闪烁白色** ~0.14s
 - 飞行全程**颜色不变浅**（opacity 不淡出），仅闪烁时变色/提亮
-- 单颗粒子 + 短拖尾，非长轨迹线
-- 入轨后云环在对应位置 lerp 显现一颗云粒子
+- **单颗粒子 + 短拖尾贯穿两段**（同一个 `shot.projectile`/`shot.trail`，不销毁重建），非长轨迹线
+- 入轨后云环在对应位置显现一颗云粒子（`commitCloudPoint`）
 
 ## 7. 验收清单
 
-- [ ] 粒子从炮口正前方射出，初速度平行炮口轴线
-- [ ] 炮口模型每帧对齐 v0，source 反向指向球心
+- [ ] 粒子从星球球心出发（无炮塔），初速度 = `v0` = `launchDirFor(球心, 机动点)`
 - [ ] 第一段是仿抛物线（v0 + 恒星重力），非贝塞尔/圆弧
 - [ ] 第一段弹道不与云环圆柱体相交
 - [ ] 弹道切线（黄道面投影）与最近环切线叉积为正（顺公转）
 - [ ] 机动点在入轨壁（半径 57）、高度 = seed 高度
 - [ ] 第二段终点速度水平、等于 seed 公转切线
+- [ ] **同一个 obj 连续移动贯穿两段**，段一终点 = 段二起点，无销毁/重生/强制位移
+- [ ] **机动点不被预测角旋转**，落点在入轨壁圆环上
 - [ ] 机动角度 < 30°
 - [ ] 机动闪红 / 到达闪白，飞行中不淡出
 - [ ] 每发独立选点，多发不叠成一条线
@@ -84,9 +94,12 @@ pos(t) = source + a·t·v0 + b·t²·(指向恒星)
 |---|---|
 | 抛物线插值 | `parabolaLerp(a, b, vDir, t)` |
 | 抛物线终点切线 | `parabolaLerpEndTangent(a, b, vDir)` |
-| 初速度抬高 | `launchDirFor(source, target)` + `ARC_RISE` |
+| 初速度抬高 | `launchDirFor(source, maneuver)` + `ARC_RISE` |
+| 粒子源（球心，无炮塔）| `spawnCloudShot`（`source = planetCenter`）|
 | 每发选点 | `cloudEntryFor` + `spawnCloudShot` |
-| 炮口对齐 | `updateFactory`（factory.quaternion 朝 v0） |
+| 行星视觉（颜色/状态环/大气/轨道）| `updatePlanetVisual` |
 | 切线同向公转 | `tangentFor`（`radial × (0,1,0)`） |
-| 切入 seed | `nextCloudTarget` + `updateInjectedClouds` |
-| 颜色闪烁 | `updateShots`（红）、`updateInjectedClouds`（红/白） |
+| 单 obj 两段位置 | `shotPosition`（段一抛物线 / 段二 `horizontalHermite`） |
+| 段二水平 Hermite | `horizontalHermite`（G1 顺接 + 终切线 = seed 公转切线） |
+| 切换段二 + 解析 seed | `updateShots`（progress ≥ `SHOT_PHASE1_RATIO`）+ `nextCloudTarget` |
+| 颜色闪烁 / 缩放 | `updateShotAppearance`（机动闪红 / 到达闪白 / 段二收尾缩小） |
