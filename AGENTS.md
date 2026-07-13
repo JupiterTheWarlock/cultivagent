@@ -23,6 +23,6 @@ Do not commit local tokens, `~/.cultivagent/config.json`, `.wrangler/`, or Codex
 
 修改 `src/games/dyson.html` 的发射轨迹、选点、粒子源、注入、闪烁逻辑前，**必须**先读 [docs/dev/dyson-launch-trajectory.md](docs/dev/dyson-launch-trajectory.md) 并严格按其约束实现。
 
-文档固化了硬性约束：仿抛物线弹道（v0 + 恒星重力，非贝塞尔/圆弧）、每发独立选点、机动点在行星黄道投影 180° 对面且高度=seed 高度、短顺行圆弧入云、不与云环圆柱相交、粒子从行星球心出发、机动闪红/到达大闪白。
+文档固化了硬性约束：每发只选一个位于行星黄道投影 180° 对面的最终 seed；粒子从行星球心沿单段仿抛物线直接命中，终速顺公转；禁止 maneuver、第二段机动、圆弧/Hermite 和红闪；到达大闪白。
 
 改完跑 `npm run smoke` 验证加载，再 `npm run worker:deploy` 部署。

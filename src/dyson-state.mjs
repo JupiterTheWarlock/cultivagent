@@ -2,8 +2,7 @@ export const DYSON_CONSTANTS = {
   token_per_cloud: 100,
   structure_token_cost: 10_000_000,
   emit_rate: 10,
-  shot_duration_seconds: 9.6, // 单 obj 连续移动总时长（段一抛物线 8.4 + 段二水平 Hermite 1.2）
-  injection_duration_seconds: 1.2, // 段二（机动点 → seed）时长
+  shot_duration_seconds: 9.6, // 单段 180° 仿抛物线总时长
   max_batch_shots: 100, // 大批 usage 用加权粒子表达，单批视觉发射最长 10 秒
   batch_window_seconds: 10,
   max_active_shots: 200,

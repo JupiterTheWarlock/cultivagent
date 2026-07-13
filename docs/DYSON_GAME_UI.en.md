@@ -97,40 +97,26 @@ Particle source:
 
 - There is no turret or muzzle model.
 - A particle starts at the planet center, remains depth-occluded inside the opaque planet, and becomes visible after crossing the surface.
-- Initial velocity is derived from that shot's maneuver, never from the planet's stale batch-start position.
+- Initial velocity is derived from that shot's final seed, never from the planet's stale batch-start position.
 
 Batch rules:
 
-- Every shot derives an independent seed and maneuver from `batch seed + shot index`; batch entry points are never shared.
-- Fix the seed height first, then place the radius-57 maneuver at the exact ecliptic antipode of the launch planet at that same height.
+- Every shot derives one independent final seed from `batch seed + shot index`; batch targets are never shared.
+- The seed sits at the exact ecliptic antipode of the launch planet.
 - Large batches may use weighted visual shots, but logical cloud counts must be conserved.
 
-First flight segment:
+Single flight segment:
 
-- The first segment starts at the planet center and reaches the radius-57 maneuver.
-- It is a ballistic-style parabola defined by `v0 + t² × starward gravity`, never a Bézier or circular arc.
-- It must travel 180° around the star, hit the maneuver exactly, and remain outside the ring's cylindrical outer wall.
-- Solve `v0` and the stellar-gravity term from the endpoint and required prograde terminal velocity; the terminal tangent must equal the maneuver's orbital tangent.
-
-Orbital entry point:
-
-- The maneuver is fixed at `CLOUD_ENTRY_RADIUS = 57`.
-- Its ecliptic direction is exactly opposite the launch planet's ecliptic direction.
-- Its height exactly equals that shot's seed height.
-
-Second flight segment:
-
-- After reaching the entry point, the particle enters second-stage thrust.
-- The second-stage direction's ecliptic projection must also be within `30°` of the ring's tangent-velocity direction there.
-- The second-stage thrust must travel in the prograde direction — not straight toward the center, not retrograde.
-- The second segment is a `0.08–0.22 rad` horizontal prograde arc whose radius eases inward and whose endpoint tangents both follow the orbit.
-- One projectile and trail continue through both segments; no respawn or teleport is allowed.
+- The particle travels directly from the planet center into the seed along one ballistic-style `v0 + t² × starward gravity` parabola.
+- Maneuvers, second-stage thrust, Béziers, circular arcs, and Hermite curves are forbidden.
+- It must travel 180° around the star, hit the seed exactly, and never pass inside the seed radius.
+- Solve `v0` and the stellar-gravity term from the seed and required prograde terminal velocity; the terminal tangent must equal the seed's orbital tangent.
 
 Cloud-entry presentation:
 
 - Each emitted particle is a single particle with a short trail.
 - The trail is not a continuously drawn long track line.
-- Particles do not fade during flight; the maneuver flashes red and arrival produces a large expanding white flash.
+- Particles do not fade during flight and there is no maneuver flash; arrival produces a large expanding white flash.
 - When a particle enters the ring, the ring's particle system spawns/reveals a cloud particle at the entry position.
 - This reveal lerps, reading as a tangential orbital entry and joining the revolution.
 
@@ -215,8 +201,8 @@ Launch acceptance:
 - No auto-emission without a request.
 - Every shot picks independently; volleys do not collapse onto one line.
 - Particles start at the planet center and become visible after crossing its surface.
-- Segment one is parabolic, hits radius 57 at the planet's exact antipode, and never intersects the cloud cylinder.
-- Segment one arrives prograde; segment two is a short prograde arc below 30° and must never turn back.
+- One parabolic segment directly hits the final seed at the planet's exact antipode and never passes inside the seed radius.
+- It arrives prograde; there is no maneuver or second segment.
 - The particle's orbital-entry direction matches the ring's revolution direction.
 
 Layout acceptance:

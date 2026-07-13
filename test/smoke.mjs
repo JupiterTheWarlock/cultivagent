@@ -10,8 +10,7 @@ import {
   buildShotTrajectory,
   firstPhaseIsValid,
   parabolaPoint,
-  progradeAngle,
-  secondPhaseIsValid,
+  parabolaTangent,
   tangentFor,
 } from "../src/games/dyson-trajectory.mjs";
 import { normalizeEvent, normalizeOtelLogs, translateLoopEvent } from "../src/normalize.mjs";
@@ -421,10 +420,12 @@ try {
   assert.match(dyson, /syncServerClock/);
   assert.match(dyson, /syncServiceShots/);
   assert.match(dyson, /buildShotTrajectory/);
-  assert.match(dyson, /horizontalOrbitArc/);
   assert.match(dyson, /structureGroup\.rotation\.y = -tamedRotation/);
   assert.match(dyson, /spawnArrivalFlash/);
+  assert.doesNotMatch(dyson, /horizontalOrbitArc/);
   assert.doesNotMatch(dyson, /horizontalHermite/);
+  assert.doesNotMatch(dyson, /SHOT_PHASE1_RATIO/);
+  assert.doesNotMatch(dyson, /flashRed/);
   assert.match(dyson, /commitCloudPoints/);
   assert.match(dyson, /new THREE\.Timer/);
   assert.doesNotMatch(dyson, /new THREE\.Clock/);
@@ -525,7 +526,8 @@ try {
   assert.equal(dysonGrouped.agents[0].total_clouds, 101);
   const trajectorySource = await text(`${base}/dyson-trajectory.mjs`);
   assert.match(trajectorySource, /firstPhaseIsValid/);
-  assert.match(trajectorySource, /secondPhaseIsValid/);
+  assert.match(trajectorySource, /antipodalTarget/);
+  assert.doesNotMatch(trajectorySource, /secondPhaseIsValid/);
   verifyDysonStateConvergence();
   const workerSource = readFileSync(new URL("../worker/index.mjs", import.meta.url), "utf8");
   assert.match(workerSource, /cache-control", "no-store"/);
@@ -591,7 +593,6 @@ function verifyDysonTrajectories() {
     arcScale: 3.4,
     cloudRadiusMin: 23,
     cloudRadiusMax: 54,
-    entryRadius: 57,
     orbitSpeedForRadius: (radius) => 0.06 * Math.pow(78 / radius, 1.5),
     random01: dysonRandom,
     tangentCos: Math.cos(Math.PI / 6),
@@ -604,21 +605,13 @@ function verifyDysonTrajectories() {
       const seed = (sample * 7919 + planetIndex * 104729) >>> 0;
       const trajectory = buildShotTrajectory(source, seed, 1234.5, config);
       assert.ok(trajectory, `no valid trajectory for planet ${planetIndex}, sample ${sample}`);
-      assert.ok(Math.abs(Math.hypot(trajectory.maneuver.x, trajectory.maneuver.z) - 57) < 1e-6);
-      assert.ok(Math.abs(trajectory.maneuver.y - trajectory.seed.y) < 1e-6);
-      assert.ok(source.clone().setY(0).normalize().dot(trajectory.maneuver.clone().setY(0).normalize()) < -0.999999);
-      assert.ok(progradeAngle(trajectory.maneuver, trajectory.seed) > 0);
-      assert.ok(progradeAngle(trajectory.maneuver, trajectory.seed) < Math.PI / 6);
-      assert.ok(trajectory.tangentManeuver.clone().setY(0).normalize().dot(tangentFor(trajectory.maneuver)) >= config.tangentCos);
-      assert.ok(firstPhaseIsValid(source, trajectory.maneuver, trajectory.coefficients, 57, config.tangentCos));
-      assert.ok(secondPhaseIsValid(
-        trajectory.maneuver,
-        trajectory.seed,
-        trajectory.tangentManeuver,
-        trajectory.tangentSeed,
-        config.tangentCos,
-      ));
-      assert.ok(parabolaPoint(source, trajectory.coefficients, 1).distanceTo(trajectory.maneuver) < 1e-6);
+      const seedRadius = Math.hypot(trajectory.seed.x, trajectory.seed.z);
+      assert.ok(seedRadius >= 46 && seedRadius <= 54);
+      assert.ok(source.clone().setY(0).normalize().dot(trajectory.seed.clone().setY(0).normalize()) < -0.999999);
+      assert.ok(parabolaTangent(trajectory.coefficients, 1).setY(0).normalize().dot(tangentFor(trajectory.seed)) >= config.tangentCos);
+      assert.ok(firstPhaseIsValid(source, trajectory.seed, trajectory.coefficients, seedRadius, config.tangentCos));
+      assert.ok(parabolaPoint(source, trajectory.coefficients, 1).distanceTo(trajectory.seed) < 1e-6);
+      assert.equal("maneuver" in trajectory, false);
       seen.add(`${trajectory.seed.x.toFixed(4)}:${trajectory.seed.y.toFixed(4)}:${trajectory.seed.z.toFixed(4)}`);
       total += 1;
     }

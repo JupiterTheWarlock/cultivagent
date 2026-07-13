@@ -398,7 +398,6 @@
     import * as THREE from "three";
     import {
       buildShotTrajectory,
-      horizontalOrbitArc,
       parabolaPoint,
     } from "/dyson-trajectory.mjs";
 
@@ -410,20 +409,16 @@
     const FETCH_INTERVAL_MS = 5000;
     const CLOUD_RADIUS_MIN = 23;
     const CLOUD_RADIUS_MAX = 54;
-    const CLOUD_ENTRY_RADIUS = CLOUD_RADIUS_MAX + 3;
     const HORIZONTAL_TANGENT_COS = Math.cos(Math.PI / 6);
     // 开普勒第三定律基准：以第一颗行星为基准点（index 0 → radius = CLOUD_RADIUS_MAX + 24）
     const BASE_PLANET_RADIUS = CLOUD_RADIUS_MAX + 24;
     const BASE_ANGULAR_SPEED = 0.06;
     const CLOUD_ORBIT_SPEED = keplerSpeed(CLOUD_RADIUS_MAX);
     const CLOUD_SPEED_BUCKETS = 8; // 云带按半径分桶差速，内快外慢营造流动感
-    const TRANSFER_ARC_SCALE = 3.4; // 单段抛物线跨 180° 并在切线到达时避开半径 57
+    const TRANSFER_ARC_SCALE = 3.4; // 单段抛物线跨 180° 并直接切线落入 seed
     const CLOUD_EMIT_RATE = 10;
-    const SHOT_PHASE1 = 8.4;        // 段一：source → 机动点（抛物线 v0 + 恒星重力）
-    const INJECTION_DURATION = 1.2; // 段二：机动点 → seed（短顺行圆弧）
-    const SHOT_DURATION = SHOT_PHASE1 + INJECTION_DURATION; // 单 obj 连续移动总时长
-    const SHOT_PHASE1_RATIO = SHOT_PHASE1 / SHOT_DURATION;
-    const SHOT_FLASH_TIME = 0.14;   // 机动闪红 / 到达闪白时长（秒）
+    const SHOT_DURATION = 9.6;      // 单段 180° 仿抛物线总时长
+    const SHOT_FLASH_TIME = 0.14;   // 到达预闪时长（秒）
     const SHOT_FLASH_RATIO = SHOT_FLASH_TIME / SHOT_DURATION;
     const MAX_ACTIVE_SHOTS = 96;
     const SKY_STAR_COUNT = 1800;
@@ -1261,9 +1256,9 @@
       planet.emitAccumulator += dt * CLOUD_EMIT_RATE;
       while (planet.emitAccumulator >= 1 && pending > 0 && planet.shots.length < MAX_ACTIVE_SHOTS) {
         const shotSeed = planet.emitSeed++;
-        const shotEntry = cloudEntryFor(source, shotSeed, serviceSeconds() + SHOT_DURATION);
-        if (!shotEntry) break;
-        spawnCloudShot(planet, source, shotEntry, { seed: shotSeed, cloudValue: 1 });
+        const trajectory = cloudTrajectoryFor(source, shotSeed, serviceSeconds() + SHOT_DURATION);
+        if (!trajectory) break;
+        spawnCloudShot(planet, source, trajectory, { seed: shotSeed, cloudValue: 1 });
         pending -= 1;
         planet.emitAccumulator -= 1;
       }
@@ -1307,9 +1302,9 @@
       if (planet.shotIds.has(id)) return;
       const shotWorld = planetWorldAt(planet, serviceSecondsAt(emittedAtMs));
       const seed = shotSeedFor(Number(batch.entry_seed || batch.launch_seed || 0), index);
-      const entry = cloudEntryFor(shotWorld, seed, serviceSecondsAt(emittedAtMs + SHOT_DURATION * 1000));
-      if (!entry) return;
-      spawnCloudShot(planet, shotWorld, entry, {
+      const trajectory = cloudTrajectoryFor(shotWorld, seed, serviceSecondsAt(emittedAtMs + SHOT_DURATION * 1000));
+      if (!trajectory) return;
+      spawnCloudShot(planet, shotWorld, trajectory, {
         id,
         seed,
         cloudValue: shotCloudValue(batch, index),
@@ -1328,9 +1323,8 @@
       return (Math.trunc(batchSeed) ^ Math.imul(index + 1, 0x9e3779b1)) >>> 0;
     }
 
-    // planetCenter = 行星球心（世界坐标）；entry 已为本发独立解析 seed + maneuver。
-    // 单 obj 两段连续轨迹：段一抛物线 source → maneuver；段二水平 Hermite → seed。
-    function spawnCloudShot(planet, planetCenter, entry, options = {}) {
+    // planetCenter = 行星球心；trajectory 是本发直达最终 seed 的唯一抛物线。
+    function spawnCloudShot(planet, planetCenter, trajectory, options = {}) {
       const color = planet.color.clone();
       const projectile = new THREE.Mesh(
         projectileGeometry,
@@ -1352,15 +1346,10 @@
         cloudValue: Math.max(1, Math.floor(Number(options.cloudValue || 1))),
         progress,
         emittedAtMs: Number(options.emittedAtMs || 0),
-        phase: progress >= SHOT_PHASE1_RATIO ? 2 : 1,
         source,
-        maneuver: entry.maneuver,
-        seed: entry.seed,
-        seedBase: entry.seedBase,
-        coefficients: entry.coefficients,
-        tangentManeuver: entry.tangentManeuver,
-        tangentSeed: entry.tangentSeed,
-        flashRed: 0,
+        seed: trajectory.seed,
+        seedBase: trajectory.seedBase,
+        coefficients: trajectory.coefficients,
         color,
         projectile,
         trail,
@@ -1379,16 +1368,10 @@
           ? Math.min(1, Math.max(shot.progress, (serviceNowMs() - shot.emittedAtMs) / (SHOT_DURATION * 1000)))
           : Math.min(1, shot.progress + dt / SHOT_DURATION);
 
-        // 段一 → 段二切换：seed/maneuver 已在本发生成时固定，只触发机动闪红。
-        if (shot.phase < 2 && shot.progress >= SHOT_PHASE1_RATIO) {
-          shot.phase = 2;
-          shot.flashRed = SHOT_FLASH_TIME;
-        }
-
         const pos = shotPosition(shot, shot.progress, shot.position);
         const prev = shotPosition(shot, Math.max(0, shot.progress - 0.018), shot.previousPosition);
         shot.projectile.position.copy(pos);
-        updateShotAppearance(shot, dt);
+        updateShotAppearance(shot);
 
         if (shot.progress < 0.025) {
           shot.trail.material.opacity = 0;
@@ -1445,40 +1428,20 @@
       if (shot.id) planet.shotIds.delete(shot.id);
     }
 
-    // 单 obj 两段位置：段一 180° 重力抛物线；段二短顺行圆弧进入 seed。
+    // 单段直达：从行星球心沿 180° 重力抛物线直接落入最终 seed。
     function shotPosition(shot, progress, out) {
-      if (progress < SHOT_PHASE1_RATIO) {
-        const t1 = Math.min(1, progress / SHOT_PHASE1_RATIO);
-        return parabolaPoint(shot.source, shot.coefficients, t1, out);
-      }
-      const t2 = (progress - SHOT_PHASE1_RATIO) / (1 - SHOT_PHASE1_RATIO);
-      return horizontalOrbitArc(shot.maneuver, shot.seed, t2, out);
+      return parabolaPoint(shot.source, shot.coefficients, progress, out);
     }
 
-    // 单 obj 外观：渐入不淡出；机动闪红 → 到达闪白；段二收尾缩小融入云环
-    function updateShotAppearance(shot, dt) {
+    // 单 obj 外观：渐入不淡出；到达前变白，到达时另起扩散大闪。
+    function updateShotAppearance(shot) {
       const mat = shot.projectile.material;
       const base = shot.color;
       const fadeIn = Math.min(1, shot.progress / SHOT_FLASH_RATIO);
 
-      // 缩放：段一渐入放大到 1，段二收尾缩小融入云环
-      if (shot.phase >= 2 && shot.seed) {
-        const t2 = smoothstep((shot.progress - SHOT_PHASE1_RATIO) / (1 - SHOT_PHASE1_RATIO));
-        shot.projectile.scale.setScalar(THREE.MathUtils.lerp(1, 0.62, t2));
-      } else {
-        shot.projectile.scale.setScalar(0.72 + fadeIn * 0.28);
-      }
+      shot.projectile.scale.setScalar(0.72 + fadeIn * 0.28);
 
-      // 颜色：机动闪红（段二前 SHOT_FLASH_TIME）→ 基色 → 到达闪白（末 SHOT_FLASH_TIME）
-      if (shot.flashRed > 0) {
-        shot.flashRed = Math.max(0, shot.flashRed - dt);
-        const k = shot.flashRed / SHOT_FLASH_TIME;
-        mat.color.setRGB(
-          THREE.MathUtils.lerp(base.r, 1, k),
-          THREE.MathUtils.lerp(base.g, 0.25, k),
-          THREE.MathUtils.lerp(base.b, 0.25, k),
-        );
-      } else if (shot.progress > 1 - SHOT_FLASH_RATIO) {
+      if (shot.progress > 1 - SHOT_FLASH_RATIO) {
         const k = (shot.progress - (1 - SHOT_FLASH_RATIO)) / SHOT_FLASH_RATIO;
         mat.color.setRGB(
           THREE.MathUtils.lerp(base.r, 1, k),
@@ -1541,12 +1504,11 @@
       return point;
     }
 
-    function cloudEntryFor(source, seed, arrivalTime) {
+    function cloudTrajectoryFor(source, seed, arrivalTime) {
       return buildShotTrajectory(source, seed, arrivalTime, {
         arcScale: TRANSFER_ARC_SCALE,
         cloudRadiusMin: CLOUD_RADIUS_MIN,
         cloudRadiusMax: CLOUD_RADIUS_MAX,
-        entryRadius: CLOUD_ENTRY_RADIUS,
         orbitSpeedForRadius: (radius) => bucketOmega[cloudBucketForRadius(radius)],
         random01,
         tangentCos: HORIZONTAL_TANGENT_COS,
