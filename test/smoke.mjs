@@ -10,7 +10,9 @@ import {
   buildShotTrajectory,
   firstPhaseIsValid,
   parabolaPoint,
+  progradeAngle,
   secondPhaseIsValid,
+  tangentFor,
 } from "../src/games/dyson-trajectory.mjs";
 import { normalizeEvent, normalizeOtelLogs, translateLoopEvent } from "../src/normalize.mjs";
 import { collectSessionEventsFromFile } from "../plugins/codex/scripts/session-collector.mjs";
@@ -419,6 +421,10 @@ try {
   assert.match(dyson, /syncServerClock/);
   assert.match(dyson, /syncServiceShots/);
   assert.match(dyson, /buildShotTrajectory/);
+  assert.match(dyson, /horizontalOrbitArc/);
+  assert.match(dyson, /structureGroup\.rotation\.y = -tamedRotation/);
+  assert.match(dyson, /spawnArrivalFlash/);
+  assert.doesNotMatch(dyson, /horizontalHermite/);
   assert.match(dyson, /commitCloudPoints/);
   assert.match(dyson, /new THREE\.Timer/);
   assert.doesNotMatch(dyson, /new THREE\.Clock/);
@@ -582,7 +588,7 @@ try {
 
 function verifyDysonTrajectories() {
   const config = {
-    arcRise: 0.35,
+    arcScale: 3.4,
     cloudRadiusMin: 23,
     cloudRadiusMax: 54,
     entryRadius: 57,
@@ -600,7 +606,11 @@ function verifyDysonTrajectories() {
       assert.ok(trajectory, `no valid trajectory for planet ${planetIndex}, sample ${sample}`);
       assert.ok(Math.abs(Math.hypot(trajectory.maneuver.x, trajectory.maneuver.z) - 57) < 1e-6);
       assert.ok(Math.abs(trajectory.maneuver.y - trajectory.seed.y) < 1e-6);
-      assert.ok(firstPhaseIsValid(source, trajectory.maneuver, trajectory.coefficients, 57));
+      assert.ok(source.clone().setY(0).normalize().dot(trajectory.maneuver.clone().setY(0).normalize()) < -0.999999);
+      assert.ok(progradeAngle(trajectory.maneuver, trajectory.seed) > 0);
+      assert.ok(progradeAngle(trajectory.maneuver, trajectory.seed) < Math.PI / 6);
+      assert.ok(trajectory.tangentManeuver.clone().setY(0).normalize().dot(tangentFor(trajectory.maneuver)) >= config.tangentCos);
+      assert.ok(firstPhaseIsValid(source, trajectory.maneuver, trajectory.coefficients, 57, config.tangentCos));
       assert.ok(secondPhaseIsValid(
         trajectory.maneuver,
         trajectory.seed,

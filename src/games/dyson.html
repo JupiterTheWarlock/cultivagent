@@ -398,7 +398,7 @@
     import * as THREE from "three";
     import {
       buildShotTrajectory,
-      horizontalHermite,
+      horizontalOrbitArc,
       parabolaPoint,
     } from "/dyson-trajectory.mjs";
 
@@ -417,10 +417,10 @@
     const BASE_ANGULAR_SPEED = 0.06;
     const CLOUD_ORBIT_SPEED = keplerSpeed(CLOUD_RADIUS_MAX);
     const CLOUD_SPEED_BUCKETS = 8; // 云带按半径分桶差速，内快外慢营造流动感
-    const ARC_RISE = 0.35; // 抛物线初速度抬高系数（相对目标距离），越大弹道越高
+    const TRANSFER_ARC_SCALE = 3.4; // 单段抛物线跨 180° 并在切线到达时避开半径 57
     const CLOUD_EMIT_RATE = 10;
     const SHOT_PHASE1 = 8.4;        // 段一：source → 机动点（抛物线 v0 + 恒星重力）
-    const INJECTION_DURATION = 1.2; // 段二：机动点 → seed（水平 Hermite）
+    const INJECTION_DURATION = 1.2; // 段二：机动点 → seed（短顺行圆弧）
     const SHOT_DURATION = SHOT_PHASE1 + INJECTION_DURATION; // 单 obj 连续移动总时长
     const SHOT_PHASE1_RATIO = SHOT_PHASE1 / SHOT_DURATION;
     const SHOT_FLASH_TIME = 0.14;   // 机动闪红 / 到达闪白时长（秒）
@@ -759,6 +759,7 @@
     const planetMeshes = [];
     const trailGeometry = new THREE.CylinderGeometry(0.08, 0.02, 1, 8);
     const projectileGeometry = new THREE.SphereGeometry(0.22, 12, 8);
+    const arrivalFlashes = [];
     const ringGeometry = new THREE.TorusGeometry(1, 0.04, 8, 48);
     const atmosphereGeometry = new THREE.SphereGeometry(1, 24, 16);
 
@@ -794,6 +795,7 @@
       advanceCloudCount();
       updateDysonShell(t);
       updatePlanets(t, dt);
+      updateArrivalFlashes(dt);
       updateCamera(t);
       updateHover();
       renderHud();
@@ -883,7 +885,8 @@
       const visible = Math.min(structures.panelCount, structureTotal);
       setSoccerShellVisible(structures, visible);
       structureGroup.visible = visible > 0;
-      structureGroup.rotation.y = tamedRotation(CLOUD_ORBIT_SPEED);
+      // Three.js 的 +Y 正旋转与云点 θ 增长相反；负号使结构与云环同向。
+      structureGroup.rotation.y = -tamedRotation(CLOUD_ORBIT_SPEED);
       structureGroup.rotation.x = Math.sin(t * 0.05) * 0.05;
       const density = Math.min(1, structureTotal / 80);
       structures.panels.material.opacity = structureTotal ? 0.74 + density * 0.16 : 0;
@@ -1395,8 +1398,40 @@
 
         if (shot.progress >= 1) {
           commitCloudPoints(shot.seedBase, shot.seedValue, shot.cloudValue);
+          spawnArrivalFlash(shot.seed);
           removeShotAt(planet, i);
         }
+      }
+    }
+
+    function spawnArrivalFlash(position) {
+      const mesh = new THREE.Mesh(
+        projectileGeometry,
+        new THREE.MeshBasicMaterial({
+          color: 0xffffff,
+          transparent: true,
+          opacity: 1,
+          depthWrite: false,
+          blending: THREE.AdditiveBlending,
+        }),
+      );
+      mesh.position.copy(position);
+      mesh.scale.setScalar(1.4);
+      scene.add(mesh);
+      arrivalFlashes.push({ mesh, age: 0 });
+    }
+
+    function updateArrivalFlashes(dt) {
+      for (let i = arrivalFlashes.length - 1; i >= 0; i -= 1) {
+        const flash = arrivalFlashes[i];
+        flash.age += dt;
+        const t = Math.min(1, flash.age / 0.3);
+        flash.mesh.scale.setScalar(THREE.MathUtils.lerp(1.4, 22, smoothstep(t)));
+        flash.mesh.material.opacity = 1 - t;
+        if (t < 1) continue;
+        scene.remove(flash.mesh);
+        flash.mesh.material.dispose();
+        arrivalFlashes.splice(i, 1);
       }
     }
 
@@ -1410,14 +1445,14 @@
       if (shot.id) planet.shotIds.delete(shot.id);
     }
 
-    // 单 obj 两段位置：段一抛物线 source → 机动点；段二水平 Hermite 机动点 → seed
+    // 单 obj 两段位置：段一 180° 重力抛物线；段二短顺行圆弧进入 seed。
     function shotPosition(shot, progress, out) {
       if (progress < SHOT_PHASE1_RATIO) {
         const t1 = Math.min(1, progress / SHOT_PHASE1_RATIO);
         return parabolaPoint(shot.source, shot.coefficients, t1, out);
       }
       const t2 = (progress - SHOT_PHASE1_RATIO) / (1 - SHOT_PHASE1_RATIO);
-      return horizontalHermite(shot.maneuver, shot.seed, shot.tangentManeuver, shot.tangentSeed, t2, out);
+      return horizontalOrbitArc(shot.maneuver, shot.seed, t2, out);
     }
 
     // 单 obj 外观：渐入不淡出；机动闪红 → 到达闪白；段二收尾缩小融入云环
@@ -1508,7 +1543,7 @@
 
     function cloudEntryFor(source, seed, arrivalTime) {
       return buildShotTrajectory(source, seed, arrivalTime, {
-        arcRise: ARC_RISE,
+        arcScale: TRANSFER_ARC_SCALE,
         cloudRadiusMin: CLOUD_RADIUS_MIN,
         cloudRadiusMax: CLOUD_RADIUS_MAX,
         entryRadius: CLOUD_ENTRY_RADIUS,

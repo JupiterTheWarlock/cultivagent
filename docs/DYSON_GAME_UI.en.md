@@ -102,19 +102,20 @@ Particle source:
 Batch rules:
 
 - Every shot derives an independent seed and maneuver from `batch seed + shot index`; batch entry points are never shared.
-- The seed is fixed first, then a same-height maneuver at radius 57 is derived from it.
+- Fix the seed height first, then place the radius-57 maneuver at the exact ecliptic antipode of the launch planet at that same height.
 - Large batches may use weighted visual shots, but logical cloud counts must be conserved.
 
 First flight segment:
 
 - The first segment starts at the planet center and reaches the radius-57 maneuver.
 - It is a ballistic-style parabola defined by `v0 + t² × starward gravity`, never a Bézier or circular arc.
-- It must hit the maneuver exactly and remain outside the ring's cylindrical outer wall for the entire segment.
-- The ecliptic tangent cross product against the nearest ring tangent must stay positive; invalid candidates must be rejected rather than returned as an unconstrained fallback.
+- It must travel 180° around the star, hit the maneuver exactly, and remain outside the ring's cylindrical outer wall.
+- Solve `v0` and the stellar-gravity term from the endpoint and required prograde terminal velocity; the terminal tangent must equal the maneuver's orbital tangent.
 
 Orbital entry point:
 
 - The maneuver is fixed at `CLOUD_ENTRY_RADIUS = 57`.
+- Its ecliptic direction is exactly opposite the launch planet's ecliptic direction.
 - Its height exactly equals that shot's seed height.
 
 Second flight segment:
@@ -122,14 +123,14 @@ Second flight segment:
 - After reaching the entry point, the particle enters second-stage thrust.
 - The second-stage direction's ecliptic projection must also be within `30°` of the ring's tangent-velocity direction there.
 - The second-stage thrust must travel in the prograde direction — not straight toward the center, not retrograde.
-- The second segment is a horizontal cubic Hermite whose start tangent continues segment one and whose end tangent equals the seed's orbital tangent.
+- The second segment is a `0.08–0.22 rad` horizontal prograde arc whose radius eases inward and whose endpoint tangents both follow the orbit.
 - One projectile and trail continue through both segments; no respawn or teleport is allowed.
 
 Cloud-entry presentation:
 
 - Each emitted particle is a single particle with a short trail.
 - The trail is not a continuously drawn long track line.
-- Particles do not fade during flight; maneuver flashes red and arrival flashes white.
+- Particles do not fade during flight; the maneuver flashes red and arrival produces a large expanding white flash.
 - When a particle enters the ring, the ring's particle system spawns/reveals a cloud particle at the entry position.
 - This reveal lerps, reading as a tangential orbital entry and joining the revolution.
 
@@ -150,6 +151,7 @@ Structure blocks:
 - Each structure block must face the star.
 - Structure blocks must be adjacent and flush — not scattered.
 - The overall topology can be soccer-ball / honeycomb style.
+- The structure must rotate in the same direction as the cloud ring.
 - Each structure's center must be hollow, forming a honeycomb-like cell.
 - Thin lines / orbit lines around the star must not masquerade as structure.
 
@@ -213,8 +215,8 @@ Launch acceptance:
 - No auto-emission without a request.
 - Every shot picks independently; volleys do not collapse onto one line.
 - Particles start at the planet center and become visible after crossing its surface.
-- Segment one is parabolic, hits radius 57 exactly, and never intersects the cloud cylinder.
-- Segment-one tangent cross products stay positive, and segment-two initial thrust is within 30° of the ring tangent.
+- Segment one is parabolic, hits radius 57 at the planet's exact antipode, and never intersects the cloud cylinder.
+- Segment one arrives prograde; segment two is a short prograde arc below 30° and must never turn back.
 - The particle's orbital-entry direction matches the ring's revolution direction.
 
 Layout acceptance:
@@ -230,6 +232,7 @@ Structure acceptance:
 - Structure blocks are adjacent and flush.
 - Structure centers are hollow.
 - Visually a honeycomb / soccer-ball shell — not scattered pieces or orbit lines.
+- The structure and Dyson cloud ring rotate in the same direction.
 
 Persistence acceptance:
 
