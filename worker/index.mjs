@@ -37,6 +37,10 @@ async function handleRequest(request, env) {
 
   if (!(await isAuthorized(request, env))) return json({ error: "unauthorized" }, 401);
 
+  if (request.method === "GET" && url.pathname === "/dyson-trajectory.mjs") {
+    return noStore(await env.ASSETS.fetch(assetRequest(request, "/dyson-trajectory.mjs")));
+  }
+
   if (request.method === "GET" && url.pathname === "/api/events") {
     return json({ events: await listEvents(env.DB, eventFilters(url.searchParams)) });
   }
@@ -198,6 +202,7 @@ function agentStateStatement(db, event) {
       status = excluded.status,
       last_event_at = excluded.last_event_at,
       summary_json = excluded.summary_json
+    WHERE excluded.last_event_at >= agent_state.last_event_at
   `).bind(
     key,
     event.source_agent,
@@ -927,7 +932,8 @@ function usageProvider(event) {
 
 function usageTotal(event) {
   const u = event.usage || {};
-  return Number(u.input_tokens || 0) + Number(u.output_tokens || 0) + Number(u.cache_read_tokens || 0) + Number(u.cache_write_tokens || 0);
+  const components = Number(u.input_tokens || 0) + Number(u.output_tokens || 0) + Number(u.cache_read_tokens || 0) + Number(u.cache_write_tokens || 0);
+  return components || Number(u.total_tokens || 0);
 }
 
 function eventMachine(event) {

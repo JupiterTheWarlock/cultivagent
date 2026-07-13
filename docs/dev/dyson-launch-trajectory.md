@@ -1,6 +1,6 @@
 # Dyson 发射轨迹设计约束（dev）
 
-> **强制约束文档**。修改 `src/games/dyson.html` 的发射/轨迹/选点/炮口/注入逻辑前**必须**读本文档，并严格按其实现。偏离会导致弹道扭曲、横向射出、逆行入轨、与云环相交等问题。
+> **强制约束文档**。修改 `src/games/dyson.html` 的发射/轨迹/选点/粒子源/注入逻辑前**必须**读本文档，并严格按其实现。偏离会导致弹道扭曲、横向射出、逆行入轨、与云环相交等问题。
 >
 > 与 [../DYSON_GAME_UI.md](../DYSON_GAME_UI.md) 的"发射几何"段配合阅读；本文档记录最新演进（每发独立选点、仿抛物线、垂直选点、切线叉积为正），与之冲突时以本文档为准。
 
@@ -25,7 +25,7 @@
 2. **机动点（第一段终点 / 入轨点）**：
    - 位于**入轨壁**（`radius = CLOUD_ENTRY_RADIUS`）
    - **高度 = seed 高度**（垂直选点：在最终目标点对应高度的外径壁上取点，保证第二段运动平行黄道面）
-   - 角度 `α_m` 选在 seed 的公转前方，使第二段终点切线能顺接 seed 的公转切线
+   - seed 角度 `α_seed` 选在 maneuver 的公转前方；否则从 maneuver 飞向 seed 会被迫逆行。第二段终点切线顺接 seed 的公转切线
 
 ## 3. 粒子源与初速度
 
@@ -36,15 +36,15 @@
 
 ## 4. 第一段：仿抛物线（source → 机动点）
 
-**抛物线 = 基础速度 `v0` + 恒星重力**（重力方向指向恒星原点）：
+**抛物线 = 基础速度 `v0` + 恒星重力**（重力取 source→恒星方向的黄道面投影，与水平 outward 抬高严格成对）：
 
 ```
 pos(t) = source + a·t·v0 + b·t²·(指向恒星)
 ```
 
 - **禁止**贝塞尔、圆弧、椭圆弧、七扭八歪的自由曲线
-- 起点切线（t=0）= `v0`（即炮口方向，天然满足）
-- `v0` 在目标方向上叠加**水平向外**的抬高量（朝 `source.xz.normalize()` 偏移 `distance × ARC_RISE`，**不含 y 分量**），保证弹道是半抛物线（不先升）、**开头沿炮口方向直出**；否则抬高含 y 会让开头斜向上扭
+- 起点切线（t=0）= `v0`
+- `v0` 在目标方向上叠加**水平向外**的抬高量（朝 `source.xz.normalize()` 偏移 `distance × ARC_RISE`，**不含 y 分量**），保证弹道是半抛物线（不先升）、开头沿 `v0` 直出；否则抬高含 y 会让开头斜向上扭
 - 终点切线（t=1）由抛物线决定，作为第二段起点切线（顺接，不倒车）
 - **切线叉积约束**：抛物线全程，切线在黄道面（xz 平面）的投影，与**该投影点距离最近的云环点**的切线方向，**叉积 y 分量为正**（即弹道切线在环切线的逆时针侧，与公转同向，不逆行）
 - **不相交约束**：弹道曲线不得与云环圆柱体（`radius ∈ [CLOUD_RADIUS_MIN, CLOUD_RADIUS_MAX]` 且 `|y| ≤ 云环高度`）相交；通过调整 `v0` 方向/大小（抬高量、初速度权重）搜索最优路径
@@ -53,7 +53,7 @@ pos(t) = source + a·t·v0 + b·t²·(指向恒星)
 
 **第一段与第二段是同一个 obj 的连续移动**（一个 `shot`，progress `0 → 1`），**禁止"段一 obj 销毁 + 新建段二 obj"式的强制位移/重生**。段二在 progress 跨过 `SHOT_PHASE1_RATIO` 时切换：
 
-- 解析 seed 落点（`nextCloudTarget`），得到 `shot.seed` 与 `shot.tangentSeed`
+- seed、maneuver、两端切线已在本发创建时固定；切换时禁止重新选点
 - 机动闪红（见 §6）
 - 位置函数从抛物线切到水平 Hermite
 
@@ -92,14 +92,14 @@ pos(t) = source + a·t·v0 + b·t²·(指向恒星)
 
 | 约束 | 代码位置 |
 |---|---|
-| 抛物线插值 | `parabolaLerp(a, b, vDir, t)` |
-| 抛物线终点切线 | `parabolaLerpEndTangent(a, b, vDir)` |
-| 初速度抬高 | `launchDirFor(source, maneuver)` + `ARC_RISE` |
+| 抛物线插值 | `dyson-trajectory.mjs`：`parabolaPoint` |
+| 抛物线终点切线 | `dyson-trajectory.mjs`：`parabolaTangent(..., 1)` |
+| 初速度抬高 | `dyson-trajectory.mjs`：`launchDirFor` + `ARC_RISE` |
 | 粒子源（球心，无炮塔）| `spawnCloudShot`（`source = planetCenter`）|
-| 每发选点 | `cloudEntryFor` + `spawnCloudShot` |
+| 每发选点 | `shotSeedFor` + `buildShotTrajectory` + `spawnCloudShot` |
 | 行星视觉（颜色/状态环/大气/轨道）| `updatePlanetVisual` |
-| 切线同向公转 | `tangentFor`（`radial × (0,1,0)`） |
+| 切线同向公转 | `dyson-trajectory.mjs`：`tangentFor`（`radial × (0,1,0)`） |
 | 单 obj 两段位置 | `shotPosition`（段一抛物线 / 段二 `horizontalHermite`） |
-| 段二水平 Hermite | `horizontalHermite`（G1 顺接 + 终切线 = seed 公转切线） |
-| 切换段二 + 解析 seed | `updateShots`（progress ≥ `SHOT_PHASE1_RATIO`）+ `nextCloudTarget` |
+| 段二水平 Hermite | `dyson-trajectory.mjs`：`horizontalHermite`（G1 顺接 + 终切线 = seed 公转切线） |
+| 切换段二 | `updateShots`（progress ≥ `SHOT_PHASE1_RATIO`，只切 phase + 闪红，不重选 seed） |
 | 颜色闪烁 / 缩放 | `updateShotAppearance`（机动闪红 / 到达闪白 / 段二收尾缩小） |

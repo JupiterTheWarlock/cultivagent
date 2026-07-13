@@ -3,7 +3,15 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { hostname, tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import * as THREE from "three";
 import { createCultivagentServer } from "../src/server.mjs";
+import { buildDysonState } from "../src/dyson-state.mjs";
+import {
+  buildShotTrajectory,
+  firstPhaseIsValid,
+  parabolaPoint,
+  secondPhaseIsValid,
+} from "../src/games/dyson-trajectory.mjs";
 import { normalizeEvent, normalizeOtelLogs, translateLoopEvent } from "../src/normalize.mjs";
 import { collectSessionEventsFromFile } from "../plugins/codex/scripts/session-collector.mjs";
 import { collectClaudeSessionEvents } from "../plugins/claude-code/scripts/session-collector.mjs";
@@ -16,6 +24,7 @@ const dbPath = join(dir, "test.sqlite");
 const server = createCultivagentServer({ dbPath, poolTtlMs: 100 });
 
 try {
+  verifyDysonTrajectories();
   await listen(server);
   const base = `http://127.0.0.1:${server.address().port}`;
 
@@ -409,6 +418,10 @@ try {
   assert.match(dyson, /smoothServerClock/);
   assert.match(dyson, /syncServerClock/);
   assert.match(dyson, /syncServiceShots/);
+  assert.match(dyson, /buildShotTrajectory/);
+  assert.match(dyson, /commitCloudPoints/);
+  assert.match(dyson, /new THREE\.Timer/);
+  assert.doesNotMatch(dyson, /new THREE\.Clock/);
   assert.match(dyson, /emittedAtMs/);
   assert.match(dyson, /resetServiceReplay/);
   assert.match(dyson, /serviceSeeded/);
@@ -424,6 +437,8 @@ try {
   assert.match(dyson, /buildOrbitGeometry/);
   assert.match(dyson, /STAR_LIGHT_BASE/);
   assert.doesNotMatch(dyson, /serviceShotSignature/);
+  assert.doesNotMatch(dyson, /nextCloudTarget/);
+  assert.doesNotMatch(dyson, /batchEntry/);
   assert.doesNotMatch(dyson, /state\.visualClouds = Math\.max\(0, Math\.min\(FREE_CLOUD_MAX, Number\(dyson\.totals\?\.settled_clouds/);
   assert.doesNotMatch(dyson, /state\.cameraYaw \+= 0\.0005/);
   await post(`${base}/ingest`, {
@@ -462,13 +477,14 @@ try {
   const launchingAgent = dysonState.agents.find((agent) => agent.source_agent === "codex");
   assert.equal(launchingAgent.agent_key, "codex:dyson-host");
   assert.equal(launchingAgent.total_clouds, 100);
-  assert.equal(launchingAgent.emitted_clouds, 50);
-  assert.equal(launchingAgent.pending_clouds, 50);
+  assert.equal(launchingAgent.emitted_clouds, 51);
+  assert.equal(launchingAgent.pending_clouds, 49);
   assert.equal(launchingAgent.current_batch.batch_id, "dyson-launch-1:codex:dyson-host");
+  assert.equal(launchingAgent.current_batch.phase, "emitting");
   assert.equal(launchingAgent.current_batch.entry_seed, launchingAgent.batches[0].entry_seed);
-  assert.equal(launchingAgent.active_shots.length, 50);
+  assert.equal(launchingAgent.active_shots.length, 51);
   assert.equal(launchingAgent.active_shots[0].cloud_index, 0);
-  assert.equal(launchingAgent.active_shots.at(-1).cloud_index, 49);
+  assert.equal(launchingAgent.active_shots.at(-1).cloud_index, 50);
   const dysonNearRing = await get(`${base}/api/dyson/state?day=2026-07-02&now=2026-07-02T00:00:09.650Z&detail=1`);
   const nearRingAgent = dysonNearRing.agents.find((agent) => agent.source_agent === "codex");
   assert.equal(nearRingAgent.settled_clouds, 1);
@@ -501,10 +517,41 @@ try {
   assert.equal(dysonGrouped.agents.length, 1);
   assert.equal(dysonGrouped.agents[0].agent_key, "codex:dyson-host");
   assert.equal(dysonGrouped.agents[0].total_clouds, 101);
+  const trajectorySource = await text(`${base}/dyson-trajectory.mjs`);
+  assert.match(trajectorySource, /firstPhaseIsValid/);
+  assert.match(trajectorySource, /secondPhaseIsValid/);
+  verifyDysonStateConvergence();
   const workerSource = readFileSync(new URL("../worker/index.mjs", import.meta.url), "utf8");
   assert.match(workerSource, /cache-control", "no-store"/);
   assert.match(workerSource, /assetRequest\(request, "\/dyson"\)/);
+  assert.match(workerSource, /assetRequest\(request, "\/dyson-trajectory\.mjs"\)/);
   assert.match(workerSource, /start: dateParam\(params\.get\("start"\)\)/);
+  assert.match(workerSource, /excluded\.last_event_at >= agent_state\.last_event_at/);
+  await post(`${base}/ingest`, {
+    event_id: "state-newer",
+    source_agent: "codex",
+    event_type: "Stop",
+    occurred_at: "2026-07-03T00:01:00.000Z",
+    host_id: "state-host",
+    workspace_id: "state-workspace",
+    session_id: "state-session",
+    agent_status: "done",
+  });
+  await post(`${base}/ingest`, {
+    event_id: "state-older",
+    source_agent: "codex",
+    event_type: "PreToolUse",
+    occurred_at: "2026-07-03T00:00:00.000Z",
+    host_id: "state-host",
+    workspace_id: "state-workspace",
+    session_id: "state-session",
+    agent_status: "tool_calling",
+  });
+  const stateAgent = (await get(`${base}/api/agents`)).agents.find((agent) => agent.host_id === "state-host");
+  assert.equal(stateAgent.summary.meta.agent_status, "done");
+  assert.equal(stateAgent.last_event_at, "2026-07-03T00:01:00.000Z");
+  const prepareWorkerSource = readFileSync(new URL("../scripts/prepare-worker.mjs", import.meta.url), "utf8");
+  assert.match(prepareWorkerSource, /dyson-trajectory\.mjs/);
 
   const events = await get(`${base}/api/events?limit=20`);
   const otelEvent = events.events.find((x) => x.source_surface === "otel" && x.source_agent === "claude-code");
@@ -531,6 +578,111 @@ try {
   await close(server);
   server.cultivagent.db.close();
   rmSync(dir, { recursive: true, force: true });
+}
+
+function verifyDysonTrajectories() {
+  const config = {
+    arcRise: 0.35,
+    cloudRadiusMin: 23,
+    cloudRadiusMax: 54,
+    entryRadius: 57,
+    orbitSpeedForRadius: (radius) => 0.06 * Math.pow(78 / radius, 1.5),
+    random01: dysonRandom,
+    tangentCos: Math.cos(Math.PI / 6),
+  };
+  const seen = new Set();
+  let total = 0;
+  for (let planetIndex = 0; planetIndex < 32; planetIndex += 1) {
+    for (let sample = 1; sample <= 32; sample += 1) {
+      const source = dysonPlanetAt(planetIndex, dysonRandom(sample * 97 + planetIndex) * 1200);
+      const seed = (sample * 7919 + planetIndex * 104729) >>> 0;
+      const trajectory = buildShotTrajectory(source, seed, 1234.5, config);
+      assert.ok(trajectory, `no valid trajectory for planet ${planetIndex}, sample ${sample}`);
+      assert.ok(Math.abs(Math.hypot(trajectory.maneuver.x, trajectory.maneuver.z) - 57) < 1e-6);
+      assert.ok(Math.abs(trajectory.maneuver.y - trajectory.seed.y) < 1e-6);
+      assert.ok(firstPhaseIsValid(source, trajectory.maneuver, trajectory.coefficients, 57));
+      assert.ok(secondPhaseIsValid(
+        trajectory.maneuver,
+        trajectory.seed,
+        trajectory.tangentManeuver,
+        trajectory.tangentSeed,
+        config.tangentCos,
+      ));
+      assert.ok(parabolaPoint(source, trajectory.coefficients, 1).distanceTo(trajectory.maneuver) < 1e-6);
+      seen.add(`${trajectory.seed.x.toFixed(4)}:${trajectory.seed.y.toFixed(4)}:${trajectory.seed.z.toFixed(4)}`);
+      total += 1;
+    }
+  }
+  assert.ok(seen.size > total * 0.99, "shots must independently select seed points");
+}
+
+function verifyDysonStateConvergence() {
+  const event = {
+    event_id: "bounded-batch",
+    day: "2026-07-10",
+    occurred_at: "2026-07-10T00:00:00.000Z",
+    source_agent: "codex",
+    host_id: "host",
+    workspace_id: "workspace",
+    session_id: "session",
+    usage: { total_tokens: 100000 },
+    meta: { agent_status: "done" },
+  };
+  const firing = buildDysonState([event], [], { day: event.day, now: "2026-07-10T00:00:05.000Z", detail: true }).agents[0];
+  assert.equal(firing.total_clouds, 1000);
+  assert.equal(firing.current_batch.shot_count, 100);
+  assert.equal(firing.current_batch.finished_at, "2026-07-10T00:00:10.000Z");
+  assert.equal(firing.active_shots[0].cloud_value, 10);
+  assert.equal(firing.pending_clouds, 490);
+  const coasting = buildDysonState([event], [], { day: event.day, now: "2026-07-10T00:00:10.200Z", detail: true }).agents[0];
+  assert.equal(coasting.pending_clouds, 0);
+  assert.equal(coasting.current_batch.phase, "coasting");
+  const overlapping = buildDysonState(
+    [event, { ...event, event_id: "bounded-batch-2", occurred_at: "2026-07-10T00:00:11.000Z" }],
+    [],
+    { day: event.day, now: "2026-07-10T00:00:11.200Z", detail: true },
+  ).agents[0];
+  assert.equal(overlapping.current_batch.event_id, "bounded-batch-2");
+  assert.equal(overlapping.launch_state, "emitting");
+  const burstEvents = Array.from({ length: 10 }, (_, index) => ({
+    ...event,
+    event_id: `burst-${index}`,
+    occurred_at: `2026-07-10T00:00:0${index}.000Z`,
+  }));
+  const burst = buildDysonState(burstEvents, [], { day: event.day, now: "2026-07-10T00:00:10.200Z", detail: true }).agents[0];
+  assert.equal(burst.batches.length, 1);
+  assert.equal(burst.pending_clouds, 0);
+  assert.equal(burst.current_batch.phase, "coasting");
+  const settled = buildDysonState([event], [], { day: event.day, now: "2026-07-10T00:00:20.000Z", detail: true }).agents[0];
+  assert.equal(settled.launch_state, "settled");
+  assert.equal(settled.current_batch, null);
+  assert.equal(settled.settled_clouds, 1000);
+  const stale = buildDysonState(
+    [{ ...event, event_id: "stale", usage: { input_tokens: 100 }, meta: {} }],
+    [{
+      source_agent: "codex",
+      host_id: "host",
+      last_event_at: "2026-07-10T00:01:00.000Z",
+      status: "ok",
+      summary: { meta: { agent_status: "thinking" } },
+    }],
+    { day: event.day, now: "2026-07-10T00:10:00.000Z" },
+  ).agents[0];
+  assert.equal(stale.status, "idle");
+}
+
+function dysonPlanetAt(index, time) {
+  const radius = 78 + (index % 9) * 18 + Math.floor(index / 9) * 8;
+  const speed = 0.06 * Math.pow(78 / radius, 1.5);
+  const angle = index * 2.399963 + time * speed;
+  const inclination = THREE.MathUtils.degToRad([30, -30, 20, -20, 10, -10, 0][index % 7]);
+  const z = Math.sin(angle) * radius;
+  return new THREE.Vector3(Math.cos(angle) * radius, -z * Math.sin(inclination), z * Math.cos(inclination));
+}
+
+function dysonRandom(seed) {
+  const value = Math.sin(seed * 12.9898) * 43758.5453123;
+  return value - Math.floor(value);
 }
 
 function listen(server) {

@@ -28,5 +28,8 @@
     "claude-code",
     "opencode"
   ],
-  "license": "MIT"
+  "license": "MIT",
+  "dependencies": {
+    "three": "0.185.1"
+  }
 }
