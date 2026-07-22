@@ -1,6 +1,7 @@
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { buildDysonState } from "./dyson-state.mjs";
 
 export function openDatabase(dbPath) {
   mkdirSync(dirname(dbPath), { recursive: true });
@@ -37,14 +38,16 @@ export function openDatabase(dbPath) {
       host_id TEXT NOT NULL,
       workspace_id TEXT NOT NULL,
       model TEXT NOT NULL,
+      provider TEXT NOT NULL DEFAULT 'unknown',
       input_tokens REAL NOT NULL DEFAULT 0,
       output_tokens REAL NOT NULL DEFAULT 0,
       cache_read_tokens REAL NOT NULL DEFAULT 0,
       cache_write_tokens REAL NOT NULL DEFAULT 0,
       total_tokens REAL NOT NULL DEFAULT 0,
       cost_usd REAL,
+      error_count INTEGER NOT NULL DEFAULT 0,
       event_count INTEGER NOT NULL DEFAULT 0,
-      PRIMARY KEY(day, source_agent, host_id, workspace_id, model)
+      PRIMARY KEY(day, source_agent, host_id, workspace_id, model, provider)
     );
 
     CREATE TABLE IF NOT EXISTS agent_state (
@@ -117,8 +120,12 @@ export function listEvents(db, options = 100) {
   }
   const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
   const order = filters.order === "asc" ? "ASC" : "DESC";
+  const columns = filters.compact
+    ? `event_id, source_agent, source_surface, event_type, provider, model, status,
+      duration_ms, occurred_at, username, host_id, workspace_id, session_id, usage_json`
+    : "*";
   const rows = db.prepare(`
-    SELECT * FROM events ${where} ORDER BY occurred_at ${order} LIMIT ?
+    SELECT ${columns} FROM events ${where} ORDER BY occurred_at ${order} LIMIT ?
   `).all(...params, clampLimit(filters.limit, 1000, 20000));
   return rows.map(rowToEvent);
 }
@@ -137,6 +144,27 @@ export function listAgents(db) {
     ...row,
     summary: JSON.parse(row.summary_json),
   }));
+}
+
+export function listDysonState(db, options = {}) {
+  const day = options.day || new Date(Date.parse(options.start) || Date.now()).toISOString().slice(0, 10);
+  const conditions = [];
+  const params = [];
+  if (options.start || options.end) {
+    if (options.start) {
+      conditions.push("occurred_at >= ?");
+      params.push(options.start);
+    }
+    if (options.end) {
+      conditions.push("occurred_at <= ?");
+      params.push(options.end);
+    }
+  } else {
+    conditions.push("day = ?");
+    params.push(day);
+  }
+  const events = db.prepare(`SELECT * FROM events WHERE ${conditions.join(" AND ")} ORDER BY occurred_at ASC`).all(...params).map(rowToEvent);
+  return buildDysonState(events, listAgents(db), { ...options, day });
 }
 
 export function listRequestStats(db, filters = {}) {
@@ -255,17 +283,18 @@ function upsertDaily(db, event) {
   const u = event.usage;
   db.prepare(`
     INSERT INTO daily_usage (
-      day, source_agent, host_id, workspace_id, model,
+      day, source_agent, host_id, workspace_id, model, provider,
       input_tokens, output_tokens, cache_read_tokens, cache_write_tokens,
-      total_tokens, cost_usd, event_count
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
-    ON CONFLICT(day, source_agent, host_id, workspace_id, model) DO UPDATE SET
+      total_tokens, cost_usd, error_count, event_count
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
+    ON CONFLICT(day, source_agent, host_id, workspace_id, model, provider) DO UPDATE SET
       input_tokens = input_tokens + excluded.input_tokens,
       output_tokens = output_tokens + excluded.output_tokens,
       cache_read_tokens = cache_read_tokens + excluded.cache_read_tokens,
       cache_write_tokens = cache_write_tokens + excluded.cache_write_tokens,
       total_tokens = total_tokens + excluded.total_tokens,
       cost_usd = COALESCE(cost_usd, 0) + COALESCE(excluded.cost_usd, 0),
+      error_count = error_count + excluded.error_count,
       event_count = event_count + 1
   `).run(
     event.day,
@@ -273,12 +302,14 @@ function upsertDaily(db, event) {
     event.host_id,
     event.workspace_id,
     event.model,
+    event.provider || "unknown",
     u.input_tokens,
     u.output_tokens,
     u.cache_read_tokens,
     u.cache_write_tokens,
     u.total_tokens,
     u.cost_usd,
+    event.status === "error" ? 1 : 0,
   );
 }
 
@@ -301,6 +332,7 @@ function upsertAgentState(db, event) {
       status = excluded.status,
       last_event_at = excluded.last_event_at,
       summary_json = excluded.summary_json
+    WHERE excluded.last_event_at >= agent_state.last_event_at
   `).run(
     key,
     event.source_agent,
@@ -316,8 +348,8 @@ function upsertAgentState(db, event) {
 function rowToEvent(row) {
   const event = {
     ...row,
-    usage: JSON.parse(row.usage_json),
-    meta: JSON.parse(row.meta_json),
+    usage: JSON.parse(row.usage_json || "{}"),
+    meta: JSON.parse(row.meta_json || "{}"),
   };
   event.username = row.username || eventUsername(event);
   return event;
@@ -523,7 +555,8 @@ function usageProvider(event) {
 
 function usageTotal(event) {
   const u = event.usage || {};
-  return Number(u.input_tokens || 0) + Number(u.output_tokens || 0) + Number(u.cache_read_tokens || 0) + Number(u.cache_write_tokens || 0);
+  const components = Number(u.input_tokens || 0) + Number(u.output_tokens || 0) + Number(u.cache_read_tokens || 0) + Number(u.cache_write_tokens || 0);
+  return components || Number(u.total_tokens || 0);
 }
 
 function eventMachine(event) {
@@ -551,6 +584,59 @@ function migrateDatabase(db) {
     }
   }
   db.exec("CREATE INDEX IF NOT EXISTS events_username_idx ON events(username, occurred_at)");
+  db.exec("CREATE INDEX IF NOT EXISTS events_occurred_at_idx ON events(occurred_at)");
+
+  // daily_usage 升级：补 provider（纳入主键）+ error_count；SQLite 无法直接改主键，需重建表
+  const dailyCols = db.prepare("PRAGMA table_info(daily_usage)").all().map((row) => row.name);
+  if (!dailyCols.includes("provider")) {
+    db.exec(`
+      CREATE TABLE daily_usage_v2 (
+        day TEXT NOT NULL,
+        source_agent TEXT NOT NULL,
+        host_id TEXT NOT NULL,
+        workspace_id TEXT NOT NULL,
+        model TEXT NOT NULL,
+        provider TEXT NOT NULL DEFAULT 'unknown',
+        input_tokens REAL NOT NULL DEFAULT 0,
+        output_tokens REAL NOT NULL DEFAULT 0,
+        cache_read_tokens REAL NOT NULL DEFAULT 0,
+        cache_write_tokens REAL NOT NULL DEFAULT 0,
+        total_tokens REAL NOT NULL DEFAULT 0,
+        cost_usd REAL,
+        error_count INTEGER NOT NULL DEFAULT 0,
+        event_count INTEGER NOT NULL DEFAULT 0,
+        PRIMARY KEY(day, source_agent, host_id, workspace_id, model, provider)
+      );
+      INSERT INTO daily_usage_v2 (
+        day, source_agent, host_id, workspace_id, model, provider,
+        input_tokens, output_tokens, cache_read_tokens, cache_write_tokens,
+        total_tokens, cost_usd, error_count, event_count
+      )
+      SELECT
+        day, source_agent, host_id, workspace_id, model,
+        COALESCE(NULLIF(provider, ''), 'unknown'),
+        SUM(COALESCE(CAST(json_extract(usage_json, '$.input_tokens') AS REAL), 0)),
+        SUM(COALESCE(CAST(json_extract(usage_json, '$.output_tokens') AS REAL), 0)),
+        SUM(COALESCE(CAST(json_extract(usage_json, '$.cache_read_tokens') AS REAL), 0)),
+        SUM(COALESCE(CAST(json_extract(usage_json, '$.cache_write_tokens') AS REAL), 0)),
+        SUM(COALESCE(CAST(json_extract(usage_json, '$.total_tokens') AS REAL), 0)),
+        SUM(COALESCE(CAST(json_extract(usage_json, '$.cost_usd') AS REAL), 0)),
+        SUM(CASE WHEN status = 'error' THEN 1 ELSE 0 END),
+        COUNT(*)
+      FROM events
+      WHERE (json_extract(meta_json, '$.accounting') IS NULL OR json_extract(meta_json, '$.accounting') != 0)
+        AND (
+          COALESCE(CAST(json_extract(usage_json, '$.input_tokens') AS REAL), 0) +
+          COALESCE(CAST(json_extract(usage_json, '$.output_tokens') AS REAL), 0) +
+          COALESCE(CAST(json_extract(usage_json, '$.cache_read_tokens') AS REAL), 0) +
+          COALESCE(CAST(json_extract(usage_json, '$.cache_write_tokens') AS REAL), 0) +
+          COALESCE(CAST(json_extract(usage_json, '$.total_tokens') AS REAL), 0)
+        ) > 0
+      GROUP BY day, source_agent, host_id, workspace_id, model, provider;
+      DROP TABLE daily_usage;
+      ALTER TABLE daily_usage_v2 RENAME TO daily_usage;
+    `);
+  }
 }
 
 function unique(values) {

@@ -1,4 +1,5 @@
 import { normalizeEvent, normalizeOtelLogs, normalizeOtelMetrics, validateInput, ValidationError } from "../src/normalize.mjs";
+import { buildDysonState } from "../src/dyson-state.mjs";
 
 const COOKIE_NAME = "cultivagent_token";
 const COOKIE_MAX_AGE = 2592000;
@@ -89,10 +90,19 @@ async function handleRequest(request, env) {
   if (request.method === "GET" && (url.pathname === "/" || url.pathname === "/index.html")) {
     if (!(await isAuthorized(request, env))) return html(loginPageHtml(), cors);
     const asset = await env.ASSETS.fetch(assetRequest(request, "/"));
-    return new Response(asset.body, { status: asset.status, headers: { ...asset.headers, ...SECURITY_HEADERS, ...cors } });
+    return noStore(new Response(asset.body, { status: asset.status, headers: { ...asset.headers, ...SECURITY_HEADERS, ...cors } }));
+  }
+  if (request.method === "GET" && (url.pathname === "/dyson" || url.pathname === "/dyson.html")) {
+    if (!(await isAuthorized(request, env))) return html(loginPageHtml(), cors);
+    const dysonAsset = await env.ASSETS.fetch(assetRequest(request, "/dyson"));
+    return noStore(new Response(dysonAsset.body, { status: dysonAsset.status, headers: { ...dysonAsset.headers, ...SECURITY_HEADERS, ...cors } }));
   }
 
   if (!(await isAuthorized(request, env))) return json({ error: "unauthorized" }, 401, cors);
+
+  if (request.method === "GET" && url.pathname === "/dyson-trajectory.mjs") {
+    return noStore(await env.ASSETS.fetch(assetRequest(request, "/dyson-trajectory.mjs")));
+  }
 
   if (request.method === "GET" && url.pathname === "/api/events") {
     return json({ events: await listEvents(env.DB, eventFilters(url.searchParams)) }, 200, cors);
@@ -103,15 +113,17 @@ async function handleRequest(request, env) {
   if (request.method === "GET" && url.pathname === "/api/agents") {
     return json({ agents: await listAgents(env.DB) }, 200, cors);
   }
+  if (request.method === "GET" && url.pathname === "/api/dyson/state") {
+    return json(await listDysonState(env.DB, dysonFilters(url.searchParams)), 200, cors);
+  }
   if (request.method === "GET" && url.pathname === "/api/request-stats") {
     return json(await listRequestStats(env.DB, statsFilters(url.searchParams)), 200, cors);
   }
   if (request.method === "GET" && url.pathname === "/api/usage/summary") {
-    return json({ summary: usageSummary(await listUsageEvents(env.DB, statsFilters(url.searchParams))) }, 200, cors);
+    return json({ summary: await listUsageSummary(env.DB, statsFilters(url.searchParams)) }, 200, cors);
   }
   if (request.method === "GET" && url.pathname === "/api/usage/trends") {
-    const filters = statsFilters(url.searchParams);
-    return json({ trends: usageTrend(await listUsageEvents(env.DB, filters), filters) }, 200, cors);
+    return json({ trends: await listUsageTrends(env.DB, statsFilters(url.searchParams)) }, 200, cors);
   }
   if (request.method === "GET" && url.pathname === "/api/usage/providers") {
     return json(await listUsageProviderStats(env.DB, statsFilters(url.searchParams)), 200, cors);
@@ -207,17 +219,18 @@ function dailyUsageStatement(db, event) {
   const u = event.usage;
   return db.prepare(`
     INSERT INTO daily_usage (
-      day, source_agent, host_id, workspace_id, model,
+      day, source_agent, host_id, workspace_id, model, provider,
       input_tokens, output_tokens, cache_read_tokens, cache_write_tokens,
-      total_tokens, cost_usd, event_count
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
-    ON CONFLICT(day, source_agent, host_id, workspace_id, model) DO UPDATE SET
+      total_tokens, cost_usd, error_count, event_count
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
+    ON CONFLICT(day, source_agent, host_id, workspace_id, model, provider) DO UPDATE SET
       input_tokens = input_tokens + excluded.input_tokens,
       output_tokens = output_tokens + excluded.output_tokens,
       cache_read_tokens = cache_read_tokens + excluded.cache_read_tokens,
       cache_write_tokens = cache_write_tokens + excluded.cache_write_tokens,
       total_tokens = total_tokens + excluded.total_tokens,
       cost_usd = COALESCE(cost_usd, 0) + COALESCE(excluded.cost_usd, 0),
+      error_count = error_count + excluded.error_count,
       event_count = event_count + 1
   `).bind(
     event.day,
@@ -225,12 +238,14 @@ function dailyUsageStatement(db, event) {
     event.host_id,
     event.workspace_id,
     event.model,
+    event.provider || "unknown",
     event.usage.input_tokens,
     event.usage.output_tokens,
     event.usage.cache_read_tokens,
     event.usage.cache_write_tokens,
     event.usage.total_tokens,
     event.usage.cost_usd,
+    event.status === "error" ? 1 : 0,
   );
 }
 
@@ -253,6 +268,7 @@ function agentStateStatement(db, event) {
       status = excluded.status,
       last_event_at = excluded.last_event_at,
       summary_json = excluded.summary_json
+    WHERE excluded.last_event_at >= agent_state.last_event_at
   `).bind(
     key,
     event.source_agent,
@@ -283,7 +299,11 @@ async function listEvents(db, options = {}) {
   const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
   const order = options.order === "asc" ? "ASC" : "DESC";
   const limit = clampLimit(options.limit, 1000, 20000);
-  const { results } = await db.prepare(`SELECT * FROM events ${where} ORDER BY occurred_at ${order} LIMIT ?`).bind(...params, limit).all();
+  const columns = options.compact
+    ? `event_id, source_agent, source_surface, event_type, provider, model, status,
+      duration_ms, occurred_at, username, host_id, workspace_id, session_id, usage_json`
+    : "*";
+  const { results } = await db.prepare(`SELECT ${columns} FROM events ${where} ORDER BY occurred_at ${order} LIMIT ?`).bind(...params, limit).all();
   return results.map(rowToEvent);
 }
 
@@ -298,6 +318,27 @@ async function listDaily(db, day = null) {
 async function listAgents(db) {
   const { results } = await db.prepare("SELECT * FROM agent_state ORDER BY last_event_at DESC").all();
   return results.map((row) => ({ ...row, summary: JSON.parse(row.summary_json) }));
+}
+
+async function listDysonState(db, options = {}) {
+  const day = options.day || new Date(Date.parse(options.start) || Date.now()).toISOString().slice(0, 10);
+  const conditions = [];
+  const params = [];
+  if (options.start || options.end) {
+    if (options.start) {
+      conditions.push("occurred_at >= ?");
+      params.push(options.start);
+    }
+    if (options.end) {
+      conditions.push("occurred_at <= ?");
+      params.push(options.end);
+    }
+  } else {
+    conditions.push("day = ?");
+    params.push(day);
+  }
+  const { results } = await db.prepare(`SELECT * FROM events WHERE ${conditions.join(" AND ")} ORDER BY occurred_at ASC`).bind(...params).all();
+  return buildDysonState(results.map(rowToEvent), await listAgents(db), { ...options, day });
 }
 
 async function listRequestStats(db, filters = {}) {
@@ -327,58 +368,259 @@ async function listRequestStats(db, filters = {}) {
   };
 }
 
-async function listUsageProviderStats(db, filters = {}) {
-  const groups = groupBy(await listUsageEvents(db, filters), usageProvider);
+// —— usage 聚合：优先走 daily_usage（百级行）；daily_usage 不支持的过滤维度（username/status/hook_type/machine）降级到 events，但仍在 SQL 端 SUM/GROUP BY，不把原始行拉回 Worker ——
+
+// daily_usage 无 username/status/event_type/machine_name 列，带这些过滤时降级 events
+function dailyEligible(filters) {
+  return !filters.username && !filters.status && !filters.hook_type && !filters.machine;
+}
+
+// provider 维度归并，与 usageProvider 一致：provider 非 unknown 取 provider，否则回退 source_agent
+const PROVIDER_EXPR = "(CASE WHEN provider IS NULL OR provider = 'unknown' THEN source_agent ELSE provider END)";
+
+function dailyWhere(filters) {
+  const conditions = [];
+  const params = [];
+  if (filters.start) { conditions.push("day >= ?"); params.push(filters.start.slice(0, 10)); }
+  if (filters.end) { conditions.push("day <= ?"); params.push(filters.end.slice(0, 10)); }
+  if (filters.agent) { conditions.push("source_agent = ?"); params.push(filters.agent); }
+  if (filters.model) { conditions.push("model = ?"); params.push(filters.model); }
+  if (filters.provider) { conditions.push(`${PROVIDER_EXPR} = ?`); params.push(filters.provider); }
+  return { where: conditions.length ? `WHERE ${conditions.join(" AND ")}` : "", params };
+}
+
+// isUsageEvent 的 SQL 等价：accounting !== false 且任一 token > 0
+function usageConditions() {
+  const tok = (key) => `COALESCE(CAST(json_extract(usage_json, '$.${key}') AS REAL), 0)`;
+  return [
+    "(json_extract(meta_json, '$.accounting') IS NULL OR json_extract(meta_json, '$.accounting') != 0)",
+    `(${tok("input_tokens")} + ${tok("output_tokens")} + ${tok("cache_read_tokens")} + ${tok("cache_write_tokens")} + ${tok("total_tokens")}) > 0`,
+  ];
+}
+
+function eventsUsageWhere(filters) {
+  const conditions = usageConditions();
+  const params = [];
+  if (filters.start) { conditions.push("occurred_at >= ?"); params.push(filters.start); }
+  if (filters.end) { conditions.push("occurred_at <= ?"); params.push(filters.end); }
+  if (filters.agent) { conditions.push("source_agent = ?"); params.push(filters.agent); }
+  if (filters.model) { conditions.push("model = ?"); params.push(filters.model); }
+  if (filters.username) { conditions.push("username = ?"); params.push(filters.username); }
+  if (filters.status) { conditions.push("status = ?"); params.push(filters.status); }
+  if (filters.hook_type) { conditions.push("event_type = ?"); params.push(filters.hook_type); }
+  if (filters.provider) { conditions.push(`${PROVIDER_EXPR} = ?`); params.push(filters.provider); }
+  if (filters.machine) {
+    conditions.push("COALESCE(json_extract(meta_json, '$.machine_name'), host_id) = ?");
+    params.push(filters.machine);
+  }
+  return { where: `WHERE ${conditions.join(" AND ")}`, params };
+}
+
+function summaryFromRow(row) {
+  row = row || {};
+  const input = Number(row.input_tokens || 0);
+  const output = Number(row.output_tokens || 0);
+  const cacheRead = Number(row.cache_read_tokens || 0);
+  const cacheWrite = Number(row.cache_write_tokens || 0);
+  const total = Number(row.total_requests || 0);
+  const errors = Number(row.error_count || 0);
+  const cacheable = input + cacheRead + cacheWrite;
   return {
-    providers: [...groups.entries()].map(([provider, events]) => {
-      const summary = usageSummary(events);
-      return {
-        provider,
-        request_count: summary.total_requests,
-        total_tokens: summary.real_total_tokens,
-        success_rate: summary.success_rate,
-        avg_latency_ms: average(events.map((event) => event.duration_ms).filter((n) => n != null)),
-      };
-    }).sort((a, b) => b.total_tokens - a.total_tokens),
+    total_requests: total,
+    total_input_tokens: input,
+    total_output_tokens: output,
+    total_cache_write_tokens: cacheWrite,
+    total_cache_read_tokens: cacheRead,
+    real_total_tokens: input + output + cacheRead + cacheWrite,
+    cache_hit_rate: cacheable > 0 ? cacheRead / cacheable : 0,
+    success_rate: total ? ((total - errors) / total) * 100 : 0,
   };
+}
+
+async function listUsageSummary(db, filters = {}) {
+  if (dailyEligible(filters)) {
+    const { where, params } = dailyWhere(filters);
+    return summaryFromRow(await db.prepare(`
+      SELECT
+        SUM(input_tokens) AS input_tokens,
+        SUM(output_tokens) AS output_tokens,
+        SUM(cache_read_tokens) AS cache_read_tokens,
+        SUM(cache_write_tokens) AS cache_write_tokens,
+        SUM(event_count) AS total_requests,
+        SUM(error_count) AS error_count
+      FROM daily_usage ${where}
+    `).bind(...params).first());
+  }
+  const tok = (key) => `COALESCE(CAST(json_extract(usage_json, '$.${key}') AS REAL), 0)`;
+  const { where, params } = eventsUsageWhere(filters);
+  return summaryFromRow(await db.prepare(`
+    SELECT
+      SUM(${tok("input_tokens")}) AS input_tokens,
+      SUM(${tok("output_tokens")}) AS output_tokens,
+      SUM(${tok("cache_read_tokens")}) AS cache_read_tokens,
+      SUM(${tok("cache_write_tokens")}) AS cache_write_tokens,
+      COUNT(*) AS total_requests,
+      SUM(CASE WHEN status = 'error' THEN 1 ELSE 0 END) AS error_count
+    FROM events ${where}
+  `).bind(...params).first());
+}
+
+async function listUsageProviderStats(db, filters = {}) {
+  if (dailyEligible(filters)) {
+    const { where, params } = dailyWhere(filters);
+    const { results } = await db.prepare(`
+      SELECT
+        ${PROVIDER_EXPR} AS provider,
+        SUM(event_count) AS request_count,
+        SUM(input_tokens + output_tokens + cache_read_tokens + cache_write_tokens) AS total_tokens,
+        SUM(event_count - error_count) AS ok_count
+      FROM daily_usage ${where}
+      GROUP BY provider ORDER BY total_tokens DESC
+    `).bind(...params).all();
+    return { providers: results.map((r) => ({
+      provider: r.provider,
+      request_count: Number(r.request_count || 0),
+      total_tokens: Number(r.total_tokens || 0),
+      success_rate: Number(r.request_count || 0) ? (Number(r.ok_count || 0) / Number(r.request_count)) * 100 : 0,
+      avg_latency_ms: null,
+    })) };
+  }
+  const tok = (key) => `COALESCE(CAST(json_extract(usage_json, '$.${key}') AS REAL), 0)`;
+  const { where, params } = eventsUsageWhere(filters);
+  const { results } = await db.prepare(`
+    SELECT
+      ${PROVIDER_EXPR} AS provider,
+      COUNT(*) AS request_count,
+      SUM(${tok("input_tokens")} + ${tok("output_tokens")} + ${tok("cache_read_tokens")} + ${tok("cache_write_tokens")}) AS total_tokens,
+      SUM(CASE WHEN status != 'error' THEN 1 ELSE 0 END) AS ok_count,
+      AVG(CASE WHEN duration_ms IS NOT NULL THEN duration_ms END) AS avg_latency_ms
+    FROM events ${where}
+    GROUP BY provider ORDER BY total_tokens DESC
+  `).bind(...params).all();
+  return { providers: results.map((r) => ({
+    provider: r.provider,
+    request_count: Number(r.request_count || 0),
+    total_tokens: Number(r.total_tokens || 0),
+    success_rate: Number(r.request_count || 0) ? (Number(r.ok_count || 0) / Number(r.request_count)) * 100 : 0,
+    avg_latency_ms: r.avg_latency_ms != null ? Math.round(Number(r.avg_latency_ms)) : null,
+  })) };
 }
 
 async function listUsageModelStats(db, filters = {}) {
-  const groups = groupBy(await listUsageEvents(db, filters), (event) => event.model || "unknown");
+  if (dailyEligible(filters)) {
+    const { where, params } = dailyWhere(filters);
+    const { results } = await db.prepare(`
+      SELECT model,
+        SUM(event_count) AS request_count,
+        SUM(input_tokens + output_tokens + cache_read_tokens + cache_write_tokens) AS total_tokens
+      FROM daily_usage ${where}
+      GROUP BY model ORDER BY total_tokens DESC
+    `).bind(...params).all();
+    return { models: results.map((r) => ({ model: r.model, request_count: Number(r.request_count || 0), total_tokens: Number(r.total_tokens || 0) })) };
+  }
+  const tok = (key) => `COALESCE(CAST(json_extract(usage_json, '$.${key}') AS REAL), 0)`;
+  const { where, params } = eventsUsageWhere(filters);
+  const { results } = await db.prepare(`
+    SELECT model,
+      COUNT(*) AS request_count,
+      SUM(${tok("input_tokens")} + ${tok("output_tokens")} + ${tok("cache_read_tokens")} + ${tok("cache_write_tokens")}) AS total_tokens
+    FROM events ${where}
+    GROUP BY model ORDER BY total_tokens DESC
+  `).bind(...params).all();
+  return { models: results.map((r) => ({ model: r.model || "unknown", request_count: Number(r.request_count || 0), total_tokens: Number(r.total_tokens || 0) })) };
+}
+
+function normalizeTrendRow(r) {
   return {
-    models: [...groups.entries()].map(([model, events]) => {
-      const summary = usageSummary(events);
-      return { model, request_count: summary.total_requests, total_tokens: summary.real_total_tokens };
-    }).sort((a, b) => b.total_tokens - a.total_tokens),
+    time: r.time,
+    request_count: Number(r.request_count || 0),
+    total_input_tokens: Number(r.total_input_tokens || 0),
+    total_output_tokens: Number(r.total_output_tokens || 0),
+    total_cache_write_tokens: Number(r.total_cache_write_tokens || 0),
+    total_cache_read_tokens: Number(r.total_cache_read_tokens || 0),
+    real_total_tokens: Number(r.real_total_tokens || 0),
   };
 }
 
+async function listUsageTrends(db, filters = {}) {
+  const hourly = filters.start && filters.end
+    && (Date.parse(filters.end) - Date.parse(filters.start)) <= 24 * 60 * 60 * 1000;
+  if (!hourly && dailyEligible(filters)) {
+    const { where, params } = dailyWhere(filters);
+    const { results } = await db.prepare(`
+      SELECT
+        day || 'T00:00:00.000Z' AS time,
+        SUM(event_count) AS request_count,
+        SUM(input_tokens) AS total_input_tokens,
+        SUM(output_tokens) AS total_output_tokens,
+        SUM(cache_write_tokens) AS total_cache_write_tokens,
+        SUM(cache_read_tokens) AS total_cache_read_tokens,
+        SUM(input_tokens + output_tokens + cache_read_tokens + cache_write_tokens) AS real_total_tokens
+      FROM daily_usage ${where}
+      GROUP BY day ORDER BY day ASC
+    `).bind(...params).all();
+    return results.map(normalizeTrendRow);
+  }
+  const tok = (key) => `COALESCE(CAST(json_extract(usage_json, '$.${key}') AS REAL), 0)`;
+  const { where, params } = eventsUsageWhere(filters);
+  const bucket = hourly
+    ? "strftime('%Y-%m-%dT%H:00:00.000Z', occurred_at)"
+    : "substr(occurred_at, 1, 10) || 'T00:00:00.000Z'";
+  const { results } = await db.prepare(`
+    SELECT
+      ${bucket} AS time,
+      COUNT(*) AS request_count,
+      SUM(${tok("input_tokens")}) AS total_input_tokens,
+      SUM(${tok("output_tokens")}) AS total_output_tokens,
+      SUM(${tok("cache_write_tokens")}) AS total_cache_write_tokens,
+      SUM(${tok("cache_read_tokens")}) AS total_cache_read_tokens,
+      SUM(${tok("input_tokens")} + ${tok("output_tokens")} + ${tok("cache_read_tokens")} + ${tok("cache_write_tokens")}) AS real_total_tokens
+    FROM events ${where}
+    GROUP BY time ORDER BY time ASC
+  `).bind(...params).all();
+  return results.map(normalizeTrendRow);
+}
+
 async function listUsageLogs(db, filters = {}, page = 0, pageSize = 20) {
-  const events = await listUsageEvents(db, filters);
   const size = clampLimit(pageSize, 20, 100);
   const currentPage = Math.max(0, Number(page) || 0);
-  const start = currentPage * size;
+  // 无时间窗时默认最近 7 天，避免深翻页 OFFSET + 全表 COUNT
+  const ranged = filters.start || filters.end
+    ? filters
+    : { ...filters, start: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString(), end: new Date().toISOString() };
+  const { where, params } = eventsUsageWhere(ranged);
+  const total = Number((await db.prepare(`SELECT COUNT(*) AS n FROM events ${where}`).bind(...params).first())?.n || 0);
+  const { results } = await db.prepare(`
+    SELECT event_id, occurred_at, source_agent, username, provider, model, status,
+           duration_ms, source_surface, usage_json
+    FROM events ${where}
+    ORDER BY occurred_at DESC
+    LIMIT ? OFFSET ?
+  `).bind(...params, size, currentPage * size).all();
   return {
-    logs: events.slice(start, start + size).map((event) => {
-      const u = event.usage || {};
+    logs: results.map((row) => {
+      let u = {};
+      try { u = JSON.parse(row.usage_json || "{}"); } catch { u = {}; }
+      const total_tokens = Number(u.input_tokens || 0) + Number(u.output_tokens || 0)
+        + Number(u.cache_read_tokens || 0) + Number(u.cache_write_tokens || 0);
       return {
-        event_id: event.event_id,
-        time: event.occurred_at,
-        agent: event.source_agent,
-        username: eventUsername(event),
-        provider: usageProvider(event),
-        model: event.model || "unknown",
+        event_id: row.event_id,
+        time: row.occurred_at,
+        agent: row.source_agent,
+        username: row.username || "unknown",
+        provider: row.provider && row.provider !== "unknown" ? row.provider : row.source_agent,
+        model: row.model || "unknown",
         input_tokens: Number(u.input_tokens || 0),
         output_tokens: Number(u.output_tokens || 0),
         cache_read_tokens: Number(u.cache_read_tokens || 0),
         cache_write_tokens: Number(u.cache_write_tokens || 0),
-        total_tokens: usageTotal(event),
-        latency_ms: event.duration_ms ?? null,
-        status: event.status,
-        source: event.source_surface,
+        total_tokens,
+        latency_ms: row.duration_ms ?? null,
+        status: row.status,
+        source: row.source_surface,
       };
     }),
-    total: events.length,
+    total,
     page: currentPage,
     page_size: size,
   };
@@ -432,7 +674,7 @@ async function listFilteredEvents(db, filters = {}) {
     params.push(filters.hook_type);
   }
   const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
-  const limit = clampLimit(filters.limit, 20000, 20000);
+  const limit = clampLimit(filters.limit, 1000, 20000);
   const { results } = await db.prepare(`SELECT * FROM events ${where} ORDER BY occurred_at DESC LIMIT ?`).bind(...params, limit).all();
   let events = results.map(rowToEvent);
   if (filters.machine) events = events.filter((event) => eventMachine(event) === filters.machine);
@@ -596,7 +838,18 @@ function eventFilters(params) {
     end: dateParam(params.get("end")),
     since: dateParam(params.get("since")),
     limit: params.get("limit"),
+    compact: params.get("compact") === "1",
     order: ranged ? "asc" : "desc",
+  };
+}
+
+function dysonFilters(params) {
+  return {
+    day: dayParam(params.get("day")),
+    start: dateParam(params.get("start")),
+    end: dateParam(params.get("end")),
+    now: dateParam(params.get("now")),
+    detail: params.get("detail") === "1",
   };
 }
 
@@ -662,6 +915,12 @@ function html(body, extra = {}) {
   return text(body, "text/html; charset=utf-8", 200, extra);
 }
 
+function noStore(response) {
+  const headers = new Headers(response.headers);
+  headers.set("cache-control", "no-store");
+  return new Response(response.body, { status: response.status, headers });
+}
+
 function assetRequest(request, pathname) {
   const url = new URL(request.url);
   url.pathname = pathname;
@@ -683,6 +942,10 @@ function dateParam(value) {
   const numeric = Number(value);
   const date = Number.isFinite(numeric) ? new Date(numeric * 1000) : new Date(value);
   return Number.isFinite(date.getTime()) ? date.toISOString() : undefined;
+}
+
+function dayParam(value) {
+  return /^\d{4}-\d{2}-\d{2}$/.test(value || "") ? value : undefined;
 }
 
 function emptyToUndefined(value) {
@@ -735,7 +998,8 @@ function usageProvider(event) {
 
 function usageTotal(event) {
   const u = event.usage || {};
-  return Number(u.input_tokens || 0) + Number(u.output_tokens || 0) + Number(u.cache_read_tokens || 0) + Number(u.cache_write_tokens || 0);
+  const components = Number(u.input_tokens || 0) + Number(u.output_tokens || 0) + Number(u.cache_read_tokens || 0) + Number(u.cache_write_tokens || 0);
+  return components || Number(u.total_tokens || 0);
 }
 
 function eventMachine(event) {

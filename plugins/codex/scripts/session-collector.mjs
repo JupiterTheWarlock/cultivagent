@@ -119,8 +119,9 @@ export function collectSessionEventsFromFile(file, options = {}) {
   return options.includeIncomplete ? events : events.filter((event) => event.meta.task_complete);
 }
 
-async function main() {
-  const args = parseArgs(process.argv.slice(2));
+export async function runSessionCollector(args = {}) {
+  const delayMs = Number(args.delayMs ?? 0);
+  if (Number.isFinite(delayMs) && delayMs > 0) await sleep(delayMs);
   const root = args.root ?? join(process.env.CODEX_HOME ?? join(homedir(), ".codex"), "sessions");
   const statePath = args.state ?? DEFAULT_STATE_PATH;
   const state = loadState(statePath);
@@ -148,10 +149,15 @@ async function main() {
 
   if (!args.dryRun) saveState(statePath, { sent: [...seen].slice(-MAX_STATE_IDS) });
 
-  const result = { root, scanned_events: events.length, sent, failed };
+  return { root, scanned_events: events.length, sent, failed };
+}
+
+async function main() {
+  const args = parseArgs(process.argv.slice(2));
+  const result = await runSessionCollector(args);
   if (args.json) console.log(JSON.stringify(result, null, 2));
-  else console.log(`codex session collector: sent ${sent}, failed ${failed}`);
-  if (failed) process.exitCode = 1;
+  else console.log(`codex session collector: sent ${result.sent}, failed ${result.failed}`);
+  if (result.failed) process.exitCode = 1;
 }
 
 function findJsonlFiles(root, cutoffMs) {
@@ -223,13 +229,14 @@ function parseArgs(argv) {
     const arg = argv[i];
     if (arg === "--root") args.root = argv[++i];
     else if (arg === "--state") args.state = argv[++i];
+    else if (arg === "--delay-ms") args.delayMs = Number(argv[++i]);
     else if (arg === "--lookback-minutes") args.lookbackMinutes = Number(argv[++i]);
     else if (arg === "--include-incomplete") args.includeIncomplete = true;
     else if (arg === "--batch-size") args.batchSize = Number(argv[++i]);
     else if (arg === "--dry-run") args.dryRun = true;
     else if (arg === "--json") args.json = true;
     else if (arg === "-h" || arg === "--help") {
-      console.log("Usage: session-collector.mjs [--root DIR] [--state FILE] [--lookback-minutes N] [--include-incomplete] [--batch-size N] [--dry-run] [--json]");
+      console.log("Usage: session-collector.mjs [--root DIR] [--state FILE] [--delay-ms N] [--lookback-minutes N] [--include-incomplete] [--batch-size N] [--dry-run] [--json]");
       process.exit(0);
     }
   }
@@ -256,6 +263,10 @@ function chunks(items, size) {
   const out = [];
   for (let i = 0; i < items.length; i += chunkSize) out.push(items.slice(i, i + chunkSize));
   return out;
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function stableEventId(sessionId, turnId, timestamp, usage) {

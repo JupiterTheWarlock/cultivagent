@@ -1,0 +1,2053 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Cultivagent Dyson</title>
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%230b0f14'/%3E%3Cpath d='M31 48V31c0-9 7-15 17-15-1 11-7 18-17 18' fill='none' stroke='%2334d399' stroke-width='5' stroke-linecap='round' stroke-linejoin='round'/%3E%3Cpath d='M31 48V34c0-8-6-13-15-13 1 10 6 16 15 16' fill='none' stroke='%2338bdf8' stroke-width='5' stroke-linecap='round' stroke-linejoin='round'/%3E%3Ccircle cx='46' cy='18' r='4' fill='%2338bdf8'/%3E%3Ccircle cx='18' cy='23' r='3' fill='%2334d399'/%3E%3C/svg%3E">
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #06080d;
+      --fg: #eef6ff;
+      --muted: #91a4b8;
+      --line: rgba(145, 164, 184, 0.28);
+      --panel: rgba(8, 13, 20, 0.76);
+      --green: #44d19d;
+      --cyan: #61dafb;
+      --amber: #ffb84d;
+      --red: #ff5c78;
+      font-family: Inter, ui-sans-serif, system-ui, "Segoe UI", Arial, sans-serif;
+      background: var(--bg);
+      color: var(--fg);
+    }
+
+    * { box-sizing: border-box; }
+    html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; background: var(--bg); }
+    body { min-width: 320px; }
+    button, a { font: inherit; letter-spacing: 0; }
+    a { color: inherit; text-decoration: none; }
+    #scene { position: fixed; inset: 0; }
+    #scene canvas { display: block; width: 100%; height: 100%; }
+    .hud {
+      position: fixed;
+      inset: 18px 18px auto 18px;
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 14px;
+      pointer-events: none;
+    }
+    .brand, .metrics, .agents, .debug, .prefs, .tooltip {
+      border: 1px solid var(--line);
+      background: var(--panel);
+      backdrop-filter: blur(12px);
+      box-shadow: 0 18px 48px rgba(0, 0, 0, 0.28);
+    }
+    /* 可收起面板：.collapsible 标记，.collapsed 隐藏 .panel-body，chevron 旋转 */
+    .collapsible.collapsed .panel-body { display: none; }
+    .panel-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 8px;
+      color: var(--muted);
+      font-size: 11px;
+    }
+    .panel-title { font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; }
+    .collapse-toggle {
+      width: 22px;
+      height: 22px;
+      flex: none;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: transparent;
+      color: var(--muted);
+      cursor: pointer;
+      padding: 0;
+      font-size: 11px;
+      line-height: 1;
+    }
+    .collapse-toggle:hover { color: var(--fg); border-color: rgba(238, 246, 255, 0.42); background: rgba(255, 255, 255, 0.06); }
+    .collapse-toggle::before { content: "▾"; display: inline-block; transition: transform 0.18s ease; }
+    .collapsible.collapsed .collapse-toggle::before { transform: rotate(-90deg); }
+    .brand-row .header-tail { display: inline-flex; align-items: center; gap: 6px; }
+    .brand {
+      min-width: 210px;
+      border-radius: 8px;
+      padding: 12px 14px;
+      pointer-events: auto;
+    }
+    .brand-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+    h1 { margin: 0; font-size: 14px; line-height: 1.2; letter-spacing: 0; }
+    .back {
+      height: 28px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      padding: 0 9px;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 700;
+    }
+    .back:hover { color: var(--fg); border-color: rgba(238, 246, 255, 0.42); }
+    .sub { margin-top: 8px; color: var(--muted); font: 12px/1.4 ui-monospace, SFMono-Regular, Consolas, monospace; }
+    .metrics {
+      width: min(560px, calc(100vw - 280px));
+      border-radius: 8px;
+      padding: 10px 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      pointer-events: auto;
+    }
+    .metrics-body {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 8px;
+    }
+    .metric {
+      min-width: 0;
+      border-radius: 7px;
+      border: 1px solid rgba(145, 164, 184, 0.16);
+      padding: 9px;
+      background: rgba(255, 255, 255, 0.035);
+    }
+    .label {
+      color: var(--muted);
+      font-size: 11px;
+      line-height: 1.2;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .value {
+      margin-top: 4px;
+      font: 700 18px/1.1 ui-monospace, SFMono-Regular, Consolas, monospace;
+      letter-spacing: 0;
+    }
+    .agents {
+      position: fixed;
+      right: 18px;
+      bottom: 18px;
+      width: min(360px, calc(100vw - 36px));
+      max-height: min(44vh, 420px);
+      overflow: auto;
+      border-radius: 8px;
+      padding: 10px;
+      pointer-events: auto;
+    }
+    .left-tools {
+      position: fixed;
+      left: 18px;
+      bottom: 18px;
+      width: min(380px, calc(100vw - 36px));
+      display: grid;
+      gap: 10px;
+      pointer-events: auto;
+    }
+    .debug, .prefs {
+      border-radius: 8px;
+      padding: 10px;
+    }
+    .debug-head {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      color: var(--muted);
+      font-size: 11px;
+      margin-bottom: 8px;
+    }
+    .debug-head .collapse-toggle { margin-left: auto; }
+    .prefs summary {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      color: var(--muted);
+      font-size: 11px;
+      margin-bottom: 8px;
+    }
+    .prefs summary #statusLine { margin-left: auto; }
+    .prefs summary::after {
+      content: "▾";
+      font-weight: 400;
+      transition: transform 0.18s ease;
+    }
+    .prefs:not([open]) summary::after { transform: rotate(-90deg); }
+    .prefs summary {
+      cursor: pointer;
+      font-weight: 700;
+      list-style: none;
+    }
+    .prefs summary::-webkit-details-marker { display: none; }
+    .debug-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    .prefs-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    .debug-grid select, .debug-grid input, .debug-grid button,
+    .prefs-grid input, .prefs-grid button {
+      width: 100%;
+      min-width: 0;
+      height: 30px;
+      border: 1px solid rgba(145, 164, 184, 0.22);
+      border-radius: 7px;
+      background: rgba(255, 255, 255, 0.04);
+      color: var(--fg);
+      padding: 0 8px;
+      font-size: 12px;
+      font-weight: 700;
+    }
+    .debug-grid button, .prefs-grid button { cursor: pointer; }
+    .debug-grid button:hover, .prefs-grid button:hover { border-color: rgba(238, 246, 255, 0.42); background: rgba(255, 255, 255, 0.08); }
+    .check-row, .range-row {
+      min-height: 30px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      border: 1px solid rgba(145, 164, 184, 0.16);
+      border-radius: 7px;
+      padding: 0 8px;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 700;
+      background: rgba(255, 255, 255, 0.035);
+    }
+    .check-row input { width: 16px; height: 16px; padding: 0; }
+    .range-row { grid-column: 1 / -1; }
+    .range-row input { flex: 1; height: 24px; padding: 0; }
+    .range-row output { min-width: 48px; text-align: right; color: var(--fg); font: 11px/1 ui-monospace, SFMono-Regular, Consolas, monospace; }
+    .debug-log {
+      min-height: 16px;
+      margin-top: 8px;
+      color: var(--muted);
+      font: 11px/1.35 ui-monospace, SFMono-Regular, Consolas, monospace;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .agents-head {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      color: var(--muted);
+      font-size: 11px;
+      padding: 0 2px 8px;
+    }
+    .agents-head .collapse-toggle { margin-left: auto; }
+    .agent-row {
+      display: grid;
+      grid-template-columns: 10px minmax(0, 1fr) auto;
+      gap: 9px;
+      align-items: center;
+      min-height: 34px;
+      border-top: 1px solid rgba(145, 164, 184, 0.12);
+      padding: 8px 2px;
+    }
+    .dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 999px;
+      background: var(--muted);
+      box-shadow: 0 0 14px currentColor;
+    }
+    .agent-name {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-size: 12px;
+      font-weight: 700;
+    }
+    .agent-meta {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      color: var(--muted);
+      font: 11px/1.35 ui-monospace, SFMono-Regular, Consolas, monospace;
+    }
+    .agent-status {
+      color: var(--muted);
+      font: 11px/1 ui-monospace, SFMono-Regular, Consolas, monospace;
+    }
+    .tooltip {
+      position: fixed;
+      z-index: 3;
+      display: none;
+      max-width: min(420px, calc(100vw - 28px));
+      border-radius: 8px;
+      padding: 10px 12px;
+      pointer-events: none;
+      font-size: 12px;
+      line-height: 1.45;
+    }
+    .tooltip strong { display: block; margin-bottom: 5px; font-size: 12px; }
+    .tooltip .mono { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; color: var(--muted); }
+    .status {
+      position: fixed;
+      left: 18px;
+      bottom: 18px;
+      max-width: min(520px, calc(100vw - 36px));
+      color: var(--muted);
+      font: 12px/1.45 ui-monospace, SFMono-Regular, Consolas, monospace;
+      pointer-events: none;
+    }
+
+    @media (max-width: 820px) {
+      .hud { inset: 12px 12px auto 12px; flex-direction: column; }
+      .brand { width: 100%; }
+      .metrics { width: 100%; }
+      .metrics-body { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .agents { left: 12px; right: 12px; bottom: 12px; width: auto; max-height: 34vh; }
+      .left-tools { left: 12px; right: 12px; top: 280px; bottom: calc(34vh + 24px); width: auto; overflow: auto; }
+      .status { left: 12px; bottom: calc(34vh + 24px); max-width: calc(100vw - 24px); }
+    }
+  </style>
+  <script type="importmap">
+    { "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.185.1/build/three.module.js" } }
+  </script>
+</head>
+<body>
+  <div id="scene" aria-label="Cultivagent Dyson system"></div>
+  <div class="hud">
+    <section class="brand collapsible" data-panel="brand" aria-label="Dyson view">
+      <div class="brand-row">
+        <h1>Cultivagent Dyson</h1>
+        <span class="header-tail">
+          <button class="collapse-toggle" type="button" aria-label="收起面板" title="收起/展开"></button>
+          <a class="back" href="/">Dashboard</a>
+        </span>
+      </div>
+      <div class="panel-body">
+        <div class="sub" id="clockLine">booting renderer</div>
+      </div>
+    </section>
+    <section class="metrics collapsible" data-panel="metrics" aria-label="Dyson metrics">
+      <div class="panel-head">
+        <span class="panel-title">指标</span>
+        <button class="collapse-toggle" type="button" aria-label="收起面板" title="收起/展开"></button>
+      </div>
+      <div class="metrics-body panel-body">
+        <div class="metric"><div class="label">今日 Tokens</div><div class="value" id="tokenValue">0</div></div>
+        <div class="metric"><div class="label">戴森云</div><div class="value" id="cloudValue">0</div></div>
+        <div class="metric"><div class="label">结构块</div><div class="value" id="shellValue">0</div></div>
+        <div class="metric"><div class="label">游离云</div><div class="value" id="freeValue">0</div></div>
+      </div>
+    </section>
+  </div>
+  <section class="agents collapsible" data-panel="agents" aria-label="Agent planets">
+    <div class="agents-head">
+      <span>AGENTS</span><span id="agentCount">0</span>
+      <button class="collapse-toggle" type="button" aria-label="收起面板" title="收起/展开"></button>
+    </div>
+    <div id="agentRows" class="panel-body"></div>
+  </section>
+  <div class="left-tools">
+    <details class="prefs" aria-label="Dyson draw preferences" open>
+      <summary><span>绘制偏好</span><span id="statusLine">connecting</span></summary>
+      <div class="prefs-grid">
+        <input id="rangeStart" aria-label="开始时间" type="datetime-local">
+        <input id="rangeEnd" aria-label="结束时间" type="datetime-local">
+        <button type="button" id="rangeTodayBtn">今天</button>
+        <button type="button" id="rangeApplyBtn">应用范围</button>
+        <label class="check-row"><span>大气层</span><input id="drawAtmosphere" type="checkbox" checked></label>
+        <label class="check-row"><span>公转轨道</span><input id="drawOrbits" type="checkbox" checked></label>
+        <label class="range-row"><span>景深雾</span><input id="drawFog" type="range" min="0" max="0.015" step="0.001" value="0.006"><output id="drawFogValue">0.006</output></label>
+        <label class="range-row"><span>恒星亮度</span><input id="drawStarBrightness" type="range" min="0.4" max="2.4" step="0.1" value="1"><output id="drawStarValue">1.0x</output></label>
+      </div>
+    </details>
+    <section class="debug collapsible" data-panel="debug" aria-label="Dyson debug tools">
+      <div class="debug-head">
+        <span>DEBUG · 仅视觉</span>
+        <span>visual only</span>
+        <button class="collapse-toggle" type="button" aria-label="收起面板" title="收起/展开"></button>
+      </div>
+      <div class="panel-body">
+        <div class="debug-grid">
+          <select id="debugAgent" aria-label="Debug agent"></select>
+          <input id="debugTokens" aria-label="Debug tokens" type="number" min="100" step="100" value="10000">
+          <select id="debugStatus" aria-label="Debug status">
+            <option value="thinking">thinking</option>
+            <option value="streaming">streaming</option>
+            <option value="tool_calling">tool_calling</option>
+            <option value="waiting_approval">waiting_approval</option>
+            <option value="done">done</option>
+            <option value="error">error</option>
+          </select>
+          <button type="button" id="debugStatusBtn">状态机</button>
+          <button type="button" id="debugBeamBtn">发射云</button>
+          <button type="button" id="debugStructureBtn">凝结结构</button>
+          <button type="button" id="debugRefreshBtn">刷新</button>
+        </div>
+        <div class="debug-log" id="debugLog">visual only · 不写入数据</div>
+      </div>
+    </section>
+  </div>
+  <div class="tooltip" id="tooltip"></div>
+
+  <script type="module">
+    import * as THREE from "three";
+    import {
+      buildShotTrajectory,
+      parabolaPoint,
+    } from "/dyson-trajectory.mjs";
+
+    const TOKEN_PER_CLOUD = 100;
+    const STRUCTURE_TOKEN_COST = 10_000_000;
+    const STRUCTURE_CLOUD_COST = STRUCTURE_TOKEN_COST / TOKEN_PER_CLOUD;
+    const FREE_CLOUD_MAX = STRUCTURE_CLOUD_COST;
+    const MAX_PLANETS = 32;
+    const FETCH_INTERVAL_MS = 5000;
+    const CLOUD_RADIUS_MIN = 23;
+    const CLOUD_RADIUS_MAX = 54;
+    const HORIZONTAL_TANGENT_COS = Math.cos(Math.PI / 6);
+    // 开普勒第三定律基准：以第一颗行星为基准点（index 0 → radius = CLOUD_RADIUS_MAX + 24）
+    const BASE_PLANET_RADIUS = CLOUD_RADIUS_MAX + 24;
+    const BASE_ANGULAR_SPEED = 0.06;
+    const CLOUD_ORBIT_SPEED = keplerSpeed(CLOUD_RADIUS_MAX);
+    const CLOUD_SPEED_BUCKETS = 8; // 云带按半径分桶差速，内快外慢营造流动感
+    const TRANSFER_ARC_SCALE = 3.4; // 单段抛物线跨 180° 并直接切线落入 seed
+    const CLOUD_EMIT_RATE = 10;
+    const SHOT_DURATION = 9.6;      // 单段 180° 仿抛物线总时长
+    const SHOT_FLASH_TIME = 0.14;   // 到达预闪时长（秒）
+    const SHOT_FLASH_RATIO = SHOT_FLASH_TIME / SHOT_DURATION;
+    const MAX_ACTIVE_SHOTS = 96;
+    const SKY_STAR_COUNT = 1800;
+    const SKY_SPHERE_RADIUS = 720;
+    const STAR_LIGHT_BASE = 1200;
+    const Y_AXIS = new THREE.Vector3(0, 1, 0);
+
+    // 开普勒角速度 ω ∝ a^(-3/2)：以 BASE_PLANET_RADIUS 处为 BASE_ANGULAR_SPEED
+    function keplerSpeed(radius) {
+      return BASE_ANGULAR_SPEED * Math.pow(BASE_PLANET_RADIUS / radius, 1.5);
+    }
+
+    const els = {
+      scene: document.getElementById("scene"),
+      tokenValue: document.getElementById("tokenValue"),
+      cloudValue: document.getElementById("cloudValue"),
+      shellValue: document.getElementById("shellValue"),
+      freeValue: document.getElementById("freeValue"),
+      clockLine: document.getElementById("clockLine"),
+      agentCount: document.getElementById("agentCount"),
+      agentRows: document.getElementById("agentRows"),
+      statusLine: document.getElementById("statusLine"),
+      rangeStart: document.getElementById("rangeStart"),
+      rangeEnd: document.getElementById("rangeEnd"),
+      rangeTodayBtn: document.getElementById("rangeTodayBtn"),
+      rangeApplyBtn: document.getElementById("rangeApplyBtn"),
+      drawAtmosphere: document.getElementById("drawAtmosphere"),
+      drawOrbits: document.getElementById("drawOrbits"),
+      drawFog: document.getElementById("drawFog"),
+      drawFogValue: document.getElementById("drawFogValue"),
+      drawStarBrightness: document.getElementById("drawStarBrightness"),
+      drawStarValue: document.getElementById("drawStarValue"),
+      debugAgent: document.getElementById("debugAgent"),
+      debugTokens: document.getElementById("debugTokens"),
+      debugStatus: document.getElementById("debugStatus"),
+      debugStatusBtn: document.getElementById("debugStatusBtn"),
+      debugBeamBtn: document.getElementById("debugBeamBtn"),
+      debugStructureBtn: document.getElementById("debugStructureBtn"),
+      debugRefreshBtn: document.getElementById("debugRefreshBtn"),
+      debugLog: document.getElementById("debugLog"),
+      tooltip: document.getElementById("tooltip"),
+    };
+
+    const nf = new Intl.NumberFormat("zh-CN");
+    const short = new Intl.NumberFormat("zh-CN", { notation: "compact", maximumFractionDigits: 1 });
+    const state = {
+      targetTokens: 0,
+      targetClouds: 0,
+      targetFreeClouds: 0,
+      visualClouds: 0,
+      structureBlocks: 0,
+      visualStructureBlocks: 0,
+      freeClouds: 0,
+      agents: [],
+      agentCloudTargets: new Map(),
+      pendingByAgent: new Map(),
+      serviceSeeded: false,
+      debugAgents: new Map(),
+      serverClockOffsetMs: 0,
+      serverClockOffsetTargetMs: 0,
+      serverClockSynced: false,
+      serviceDay: "",
+      serviceDayStartMs: 0,
+      mouse: new THREE.Vector2(10, 10),
+      pointer: { x: 0, y: 0 },
+      hover: null,
+      dragging: false,
+      dragMode: "",
+      cameraYaw: 0,
+      cameraPitch: 0.38,
+      cameraDistance: 150,
+      cameraTarget: new THREE.Vector3(0, 0, 0),
+      lastPointer: { x: 0, y: 0 },
+      range: { liveToday: true, startMs: 0, endMs: 0 },
+      draw: { atmosphere: true, orbits: true, fogDensity: 0.006, starBrightness: 1 },
+    };
+
+    const renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: "high-performance" });
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.5));
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.outputColorSpace = THREE.SRGBColorSpace;
+    els.scene.appendChild(renderer.domElement);
+
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x06080d);
+    scene.fog = new THREE.FogExp2(0x06080d, 0.006);
+
+    const camera = new THREE.PerspectiveCamera(48, window.innerWidth / window.innerHeight, 0.1, 900);
+    const raycaster = new THREE.Raycaster();
+    const timer = new THREE.Timer();
+    timer.connect(document);
+
+    const skySphere = buildSkySphere(SKY_STAR_COUNT);
+    scene.add(skySphere);
+
+    const root = new THREE.Group();
+    scene.add(root);
+    scene.add(new THREE.AmbientLight(0x9ab4ff, 0.34));
+    const starLight = new THREE.PointLight(0xffcc77, STAR_LIGHT_BASE, 360, 1.7);
+    scene.add(starLight);
+
+    // 统一天体生成器（测试版）：恒星/行星共用同一 ShaderMaterial
+    // 设计要点：
+    //   - 噪声用 3D solid Worley，按物体空间位置采样 → 全曲面连续、无极点挤压
+    //   - vPos = position（物体空间）→ 表面纹理随 mesh 旋转自然转动
+    //   - 无像素化，调色板走 smoothstep 软过渡（匹配柔化后的星空风格）
+    //   - uMode：0=恒星（自发光+临边昏暗）；1=气态 2=类地 3=岩质 4=冰雪（均朝恒星 Lambert）
+    //   - 预设见 presets；新增行星只需 makeCelestialMaterial({ type })，不用换 shader
+    function makeCelestialMaterial(opts = {}) {
+      const type = opts.type || "star";
+      // 预设：每种类型一套 mode/调色板/参数。仿 PixelPlanets，但为真 3D 球体贴图
+      const presets = {
+        star:   { mode: 0, palette: [[0.30, 0.06, 0.02], [0.65, 0.16, 0.03], [1.00, 0.45, 0.12], [1.00, 0.70, 0.28], [1.00, 0.93, 0.70]], noiseScale: 3.5, flowSpeed: 0.06, bandFreq: 6.0 },
+        gas:    { mode: 1, palette: [[0.18, 0.10, 0.32], [0.50, 0.26, 0.52], [0.82, 0.50, 0.42], [0.94, 0.74, 0.54], [0.98, 0.90, 0.78]], noiseScale: 2.5, flowSpeed: 0.05, bandFreq: 9.0 },
+        terran: { mode: 2, palette: [[0.02, 0.09, 0.28], [0.06, 0.32, 0.55], [0.18, 0.42, 0.18], [0.50, 0.42, 0.22], [0.95, 0.97, 0.98]], noiseScale: 3.0, flowSpeed: 0.02, bandFreq: 0.0 },
+        rocky:  { mode: 3, palette: [[0.12, 0.10, 0.09], [0.32, 0.27, 0.22], [0.50, 0.43, 0.35], [0.66, 0.58, 0.48], [0.80, 0.73, 0.64]], noiseScale: 5.0, flowSpeed: 0.0, bandFreq: 0.0 },
+        ice:    { mode: 4, palette: [[0.10, 0.20, 0.34], [0.36, 0.56, 0.76], [0.62, 0.80, 0.93], [0.82, 0.91, 0.97], [0.96, 0.98, 1.00]], noiseScale: 4.0, flowSpeed: 0.0, bandFreq: 0.0 },
+      };
+      const preset = presets[type] || presets.star;
+      const palette = opts.palette !== undefined ? opts.palette : preset.palette;
+      const noiseScale = opts.noiseScale !== undefined ? opts.noiseScale : preset.noiseScale;
+      const flowSpeed = opts.flowSpeed !== undefined ? opts.flowSpeed : preset.flowSpeed;
+      const bandFreq = opts.bandFreq !== undefined ? opts.bandFreq : preset.bandFreq;
+      const seed = opts.seed !== undefined ? opts.seed : 1.0 + preset.mode * 0.7;
+
+      return new THREE.ShaderMaterial({
+        uniforms: {
+          uTime: { value: 0 },
+          uColors: { value: palette.map((c) => new THREE.Vector3(c[0], c[1], c[2])) },
+          uNoiseScale: { value: noiseScale },
+          uFlowSpeed: { value: flowSpeed },
+          uSeed: { value: seed },
+          uLightDir: { value: new THREE.Vector3(0.6, 0.5, 0.8).normalize() },
+          uMode: { value: preset.mode },
+          uBandFreq: { value: bandFreq },
+        },
+        vertexShader: `
+          varying vec3 vPos;
+          varying vec3 vWorldPos;
+          varying vec3 vWorldNormal;
+          void main() {
+            vPos = position;
+            vWorldPos = (modelMatrix * vec4(position, 1.0)).xyz;
+            vWorldNormal = normalize(mat3(modelMatrix) * normal);
+            gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+          }
+        `,
+        fragmentShader: `
+          varying vec3 vPos;
+          varying vec3 vWorldPos;
+          varying vec3 vWorldNormal;
+          uniform float uTime;
+          uniform vec3 uColors[5];
+          uniform float uNoiseScale;
+          uniform float uFlowSpeed;
+          uniform float uSeed;
+          uniform vec3 uLightDir;
+          uniform int uMode;
+          uniform float uBandFreq;
+
+          vec3 hash33(vec3 p) {
+            p = vec3(dot(p, vec3(127.1, 311.7, 74.7)),
+                     dot(p, vec3(269.5, 183.3, 246.1)),
+                     dot(p, vec3(113.5, 271.9, 124.6)));
+            return fract(sin(p) * 43758.5453123);
+          }
+
+          // 3D Worley F1：返回到最近细胞中心的距离
+          float worley3(vec3 p) {
+            vec3 i = floor(p);
+            vec3 f = fract(p);
+            float minD = 1.0;
+            for (int x = -1; x <= 1; x++)
+            for (int y = -1; y <= 1; y++)
+            for (int z = -1; z <= 1; z++) {
+              vec3 g = vec3(float(x), float(y), float(z));
+              vec3 o = hash33(i + g + uSeed);
+              o = 0.5 + 0.5 * sin(o * 6.2831 + uTime * 0.5);
+              vec3 d = g + o - f;
+              minD = min(minD, dot(d, d));
+            }
+            return sqrt(minD);
+          }
+
+          float hash13(vec3 p) {
+            return fract(sin(dot(p, vec3(127.1, 311.7, 74.7))) * 43758.5453123);
+          }
+
+          // 3D value noise（气态条带 / 类地大陆 / 冰雪基底）
+          float noise3(vec3 p) {
+            vec3 i = floor(p);
+            vec3 f = fract(p);
+            vec3 u = f * f * (3.0 - 2.0 * f);
+            float n000 = hash13(i + vec3(0.0, 0.0, 0.0));
+            float n100 = hash13(i + vec3(1.0, 0.0, 0.0));
+            float n010 = hash13(i + vec3(0.0, 1.0, 0.0));
+            float n110 = hash13(i + vec3(1.0, 1.0, 0.0));
+            float n001 = hash13(i + vec3(0.0, 0.0, 1.0));
+            float n101 = hash13(i + vec3(1.0, 0.0, 1.0));
+            float n011 = hash13(i + vec3(0.0, 1.0, 1.0));
+            float n111 = hash13(i + vec3(1.0, 1.0, 1.0));
+            return mix(mix(mix(n000, n100, u.x), mix(n010, n110, u.x), u.y),
+                       mix(mix(n001, n101, u.x), mix(n011, n111, u.x), u.y), u.z);
+          }
+
+          float fbm3(vec3 p) {
+            float v = 0.0;
+            float a = 0.5;
+            for (int i = 0; i < 5; i++) {
+              v += a * noise3(p);
+              p *= 2.0;
+              a *= 0.5;
+            }
+            return v;
+          }
+
+          // 5 色 smoothstep 梯度（软过渡）
+          vec3 palette(float t) {
+            t = clamp(t, 0.0, 1.0);
+            vec3 c = mix(uColors[0], uColors[1], smoothstep(0.0, 0.25, t));
+            c = mix(c, uColors[2], smoothstep(0.25, 0.5, t));
+            c = mix(c, uColors[3], smoothstep(0.5, 0.75, t));
+            c = mix(c, uColors[4], smoothstep(0.75, 1.0, t));
+            return c;
+          }
+
+          void main() {
+            vec3 sp = normalize(vPos);
+            vec3 p = sp * uNoiseScale;
+            vec3 flow = vec3(0.0, 0.0, uTime * uFlowSpeed);
+            vec3 col = vec3(0.0);
+            float t = 0.0;
+
+            if (uMode == 0) {
+              // 恒星：双层 Worley 颗粒对流
+              float n1 = worley3(p + flow);
+              float n2 = worley3(p * 2.0 + flow * 1.7 + 11.3);
+              t = 1.0 - smoothstep(0.15, 0.9, n1 * n2);
+              col = palette(t);
+            } else if (uMode == 1) {
+              // 气态：纬度条带 + FBM 扰动 + 风暴涡旋
+              float warp = fbm3(sp * 2.5 + flow) * 0.5;
+              float bands = sin((sp.y + warp) * uBandFreq) * 0.5 + 0.5;
+              float storm = fbm3(sp * 4.0 + flow * 2.0) * 0.25;
+              t = clamp(bands + storm, 0.0, 1.0);
+              col = palette(t);
+            } else if (uMode == 2) {
+              // 类地：FBM 大陆/海洋 + 极冠
+              float h = fbm3(p + flow);
+              float sea = 0.5;
+              if (h < sea) {
+                col = mix(uColors[0], uColors[1], smoothstep(0.0, sea, h));
+              } else {
+                col = mix(uColors[2], uColors[3], smoothstep(sea, 0.95, h));
+              }
+              float ice = smoothstep(0.72, 0.92, abs(sp.y));
+              col = mix(col, uColors[4], ice);
+            } else if (uMode == 3) {
+              // 岩质：陨石坑（Worley）+ FBM 基底
+              float craters = worley3(p + uSeed);
+              float base = fbm3(sp * (uNoiseScale * 0.5) + flow * 0.2);
+              t = clamp(base * 0.55 + (1.0 - smoothstep(0.0, 0.45, craters)) * 0.45, 0.0, 1.0);
+              col = palette(t);
+            } else {
+              // 冰雪：FBM 基底 + 冰裂（Worley 边缘）
+              float base = fbm3(sp * 2.5 + flow);
+              float cracks = worley3(p + uSeed * 1.7);
+              t = clamp(base + (1.0 - smoothstep(0.1, 0.4, cracks)) * 0.25, 0.0, 1.0);
+              col = palette(t);
+            }
+
+            if (uMode == 0) {
+              // 恒星自发光 + 轻微临边昏暗
+              float limb = max(dot(normalize(vWorldNormal),
+                                   normalize(cameraPosition - vWorldPos)), 0.0);
+              col *= mix(0.62, 1.0, pow(limb, 0.45));
+            } else {
+              // 行星：朝恒星方向的 Lambert（uLightDir 由 JS 每帧设为 -normalize(worldPos)）
+              float ndl = clamp(dot(normalize(vWorldNormal), normalize(uLightDir)), 0.0, 1.0);
+              col *= 0.10 + 0.90 * ndl;
+            }
+
+            gl_FragColor = vec4(col, 1.0);
+          }
+        `,
+      });
+    }
+
+    const star = new THREE.Mesh(
+      new THREE.SphereGeometry(13, 64, 64),
+      makeCelestialMaterial({ noiseScale: 3.5, flowSpeed: 0.06 })
+    );
+    star.userData.kind = "star";
+    scene.add(star);
+
+    const corona = new THREE.Mesh(
+      new THREE.SphereGeometry(15.5, 48, 24),
+      new THREE.MeshBasicMaterial({ color: 0xffd18a, transparent: true, opacity: 0.1, depthWrite: false })
+    );
+    scene.add(corona);
+
+    const cloudGroup = new THREE.Group();
+    root.add(cloudGroup);
+    const cloudGeometry = buildCloudGeometry(FREE_CLOUD_MAX);
+    const cloudSeedPositions = cloudGeometry.attributes.position.array.slice();
+    // 差速旋转预算：每点半径、θ₀ 的 cos/sin、所属桶（同桶共享 ω，加法展开避免每点 cos/sin）
+    const cloudRadius = new Float32Array(FREE_CLOUD_MAX);
+    const cloudCosTheta0 = new Float32Array(FREE_CLOUD_MAX);
+    const cloudSinTheta0 = new Float32Array(FREE_CLOUD_MAX);
+    const cloudBucket = new Uint8Array(FREE_CLOUD_MAX);
+    const bucketOmega = new Float32Array(CLOUD_SPEED_BUCKETS);
+    buildCloudSpeedBuckets();
+    const cloudMaterial = new THREE.PointsMaterial({
+      color: 0x79e8ff,
+      size: 0.24,
+      sizeAttenuation: true,
+      transparent: true,
+      opacity: 0.68,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+    });
+    const clouds = new THREE.Points(cloudGeometry, cloudMaterial);
+    clouds.frustumCulled = false;
+    clouds.geometry.setDrawRange(0, 0);
+    cloudGroup.add(clouds);
+
+    const structureGroup = new THREE.Group();
+    scene.add(structureGroup);
+    const structures = buildSoccerShell(32);
+    structureGroup.add(structures.panels, structures.outlines);
+
+    const planets = new Map();
+    const planetMeshes = [];
+    const trailGeometry = new THREE.CylinderGeometry(0.08, 0.02, 1, 8);
+    const projectileGeometry = new THREE.SphereGeometry(0.22, 12, 8);
+    const arrivalFlashes = [];
+    const ringGeometry = new THREE.TorusGeometry(1, 0.04, 8, 48);
+    const atmosphereGeometry = new THREE.SphereGeometry(1, 24, 16);
+
+    renderer.setAnimationLoop(animate);
+    window.addEventListener("resize", onResize);
+    window.addEventListener("pointermove", onPointerMove);
+    window.addEventListener("pointerdown", onPointerDown);
+    window.addEventListener("pointerup", onPointerUp);
+    window.addEventListener("pointercancel", onPointerUp);
+    window.addEventListener("wheel", onWheel, { passive: false });
+    window.addEventListener("contextmenu", (event) => event.preventDefault());
+    window.addEventListener("dblclick", resetCamera);
+    els.rangeTodayBtn.addEventListener("click", useTodayRange);
+    els.rangeApplyBtn.addEventListener("click", applyRange);
+    for (const input of [els.drawAtmosphere, els.drawOrbits, els.drawFog, els.drawStarBrightness]) {
+      input.addEventListener("input", readDrawPrefs);
+    }
+    els.debugStructureBtn.addEventListener("click", postDebugStructure);
+    els.debugStatusBtn.addEventListener("click", postDebugStatus);
+    els.debugBeamBtn.addEventListener("click", fireDebugBeam);
+    els.debugRefreshBtn.addEventListener("click", refreshData);
+    initCollapsiblePanels();
+    initRangeControls();
+    readDrawPrefs();
+    refreshData();
+    setInterval(refreshData, FETCH_INTERVAL_MS);
+
+    function animate(timestamp) {
+      timer.update(timestamp);
+      const dt = Math.min(timer.getDelta(), 0.05);
+      smoothServerClock(dt);
+      const t = serviceSeconds();
+      advanceCloudCount();
+      updateDysonShell(t);
+      updatePlanets(t, dt);
+      updateArrivalFlashes(dt);
+      updateCamera(t);
+      updateHover();
+      renderHud();
+      renderer.render(scene, camera);
+    }
+
+    function advanceCloudCount() {
+      state.freeClouds = Math.floor(Math.max(0, Math.min(FREE_CLOUD_MAX, state.visualClouds)));
+      clouds.geometry.setDrawRange(0, state.freeClouds);
+      updateCloudPositions();
+    }
+
+    // 按半径分桶，每桶用代表半径的开普勒角速度；同桶点共享 ω
+    function buildCloudSpeedBuckets() {
+      const sumR = new Float32Array(CLOUD_SPEED_BUCKETS);
+      const countR = new Uint32Array(CLOUD_SPEED_BUCKETS);
+      for (let i = 0; i < FREE_CLOUD_MAX; i += 1) {
+        const x = cloudSeedPositions[i * 3];
+        const z = cloudSeedPositions[i * 3 + 2];
+        const r = Math.hypot(x, z) || 1;
+        cloudRadius[i] = r;
+        cloudCosTheta0[i] = x / r;
+        cloudSinTheta0[i] = z / r;
+        const bucket = cloudBucketForRadius(r);
+        cloudBucket[i] = bucket;
+        sumR[bucket] += r;
+        countR[bucket] += 1;
+      }
+      for (let k = 0; k < CLOUD_SPEED_BUCKETS; k += 1) {
+        const meanR = countR[k] ? sumR[k] / countR[k] : CLOUD_RADIUS_MAX;
+        bucketOmega[k] = keplerSpeed(meanR);
+      }
+    }
+
+    function cloudBucketForRadius(radius) {
+      const span = CLOUD_RADIUS_MAX - CLOUD_RADIUS_MIN;
+      return clamp(Math.floor(((radius - CLOUD_RADIUS_MIN) / span) * CLOUD_SPEED_BUCKETS), 0, CLOUD_SPEED_BUCKETS - 1);
+    }
+
+    // 差速旋转：cloudGroup 不再整体旋转，每个云点按所属桶的 ω 独立旋转。
+    // cos(a+b) 加法展开，每点 4 乘 2 加，三角函数仅 K 次/帧。
+    function updateCloudPositions() {
+      const n = state.freeClouds;
+      if (n <= 0) return;
+      const t = serviceSeconds();
+      const cosPhi = (updateCloudPositions._cosPhi ||= new Float32Array(CLOUD_SPEED_BUCKETS));
+      const sinPhi = (updateCloudPositions._sinPhi ||= new Float32Array(CLOUD_SPEED_BUCKETS));
+      for (let k = 0; k < CLOUD_SPEED_BUCKETS; k += 1) {
+        const phi = bucketOmega[k] * t;
+        cosPhi[k] = Math.cos(phi);
+        sinPhi[k] = Math.sin(phi);
+      }
+      const arr = cloudGeometry.attributes.position.array;
+      for (let i = 0; i < n; i += 1) {
+        const k = cloudBucket[i];
+        const cT = cloudCosTheta0[i];
+        const sT = cloudSinTheta0[i];
+        const cosPhiK = cosPhi[k];
+        const sinPhiK = sinPhi[k];
+        const r = cloudRadius[i];
+        arr[i * 3] = r * (cT * cosPhiK - sT * sinPhiK);
+        arr[i * 3 + 1] = cloudSeedPositions[i * 3 + 1];
+        arr[i * 3 + 2] = r * (sT * cosPhiK + cT * sinPhiK);
+      }
+      cloudGeometry.attributes.position.needsUpdate = true;
+    }
+
+    // 种子点 i 在 t 时刻位置（root 局部系），供注入落点选择
+    function cloudWorldAt(i, t) {
+      const k = cloudBucket[i];
+      const phi = bucketOmega[k] * t;
+      const cosPhi = Math.cos(phi);
+      const sinPhi = Math.sin(phi);
+      const cT = cloudCosTheta0[i];
+      const sT = cloudSinTheta0[i];
+      const r = cloudRadius[i];
+      return new THREE.Vector3(
+        r * (cT * cosPhi - sT * sinPhi),
+        cloudSeedPositions[i * 3 + 1],
+        r * (sT * cosPhi + cT * sinPhi),
+      );
+    }
+
+    function updateDysonShell(t) {
+      // ponytail: one soccer shell has 32 panels; add layered shells if overflow needs visible depth.
+      const structureTotal = state.structureBlocks + (state.visualStructureBlocks || 0);
+      const visible = Math.min(structures.panelCount, structureTotal);
+      setSoccerShellVisible(structures, visible);
+      structureGroup.visible = visible > 0;
+      // Three.js 的 +Y 正旋转与云点 θ 增长相反；负号使结构与云环同向。
+      structureGroup.rotation.y = -tamedRotation(CLOUD_ORBIT_SPEED);
+      structureGroup.rotation.x = Math.sin(t * 0.05) * 0.05;
+      const density = Math.min(1, structureTotal / 80);
+      structures.panels.material.opacity = structureTotal ? 0.74 + density * 0.16 : 0;
+      structures.outlines.material.opacity = structureTotal ? 0.55 + density * 0.18 : 0;
+    }
+
+    function updatePlanets(t, dt) {
+      for (const planet of planets.values()) {
+        planet.mesh.position.copy(planetOrbitPosition(planet, t));
+        planet.mesh.rotation.y = t * 0.6;
+        planet.mesh.rotation.x = Math.sin(t * 0.4 + planet.index) * 0.12;
+        const world = planet.worldPosition;
+        planet.mesh.getWorldPosition(world);
+        const pmat = planet.mesh.material;
+        pmat.uniforms.uTime.value = t;
+        pmat.uniforms.uLightDir.value.copy(world).normalize().negate();
+        syncServiceShots(planet);
+        updateEmissionQueue(planet, world, dt);
+        updatePlanetVisual(planet, t);
+        updateShots(planet, dt);
+      }
+    }
+
+    function updateCamera(t) {
+      const distance = state.cameraDistance;
+      const pitch = THREE.MathUtils.clamp(state.cameraPitch, -0.85, 0.85);
+      camera.position.set(
+        Math.sin(state.cameraYaw) * Math.cos(pitch) * distance,
+        Math.sin(pitch) * distance,
+        Math.cos(state.cameraYaw) * Math.cos(pitch) * distance
+      ).add(state.cameraTarget);
+      camera.lookAt(state.cameraTarget);
+      skySphere.position.copy(camera.position);
+      star.rotation.y = t * 0.09;
+      star.material.uniforms.uTime.value = t;
+      corona.rotation.y = -t * 0.045;
+      corona.rotation.z = t * 0.025;
+    }
+
+    // 面板收起/展开：每个 .collapsible 面板的 toggle 按钮切换 collapsed，状态写入 localStorage
+    function initCollapsiblePanels() {
+      document.querySelectorAll(".collapsible").forEach((panel) => {
+        const key = `dyson:collapsed:${panel.dataset.panel}`;
+        if (localStorage.getItem(key) === "1") panel.classList.add("collapsed");
+        const toggle = panel.querySelector(".collapse-toggle");
+        if (!toggle) return;
+        toggle.addEventListener("click", () => {
+          const collapsed = panel.classList.toggle("collapsed");
+          localStorage.setItem(key, collapsed ? "1" : "0");
+        });
+      });
+    }
+
+    function initRangeControls() {
+      const now = Date.now();
+      state.range.startMs = startOfTodayMs(now);
+      state.range.endMs = now;
+      renderRangeControls();
+    }
+
+    function renderRangeControls() {
+      els.rangeStart.value = toLocalInputValue(state.range.startMs);
+      els.rangeEnd.value = toLocalInputValue(state.range.liveToday ? Date.now() : state.range.endMs);
+    }
+
+    function useTodayRange() {
+      state.range.liveToday = true;
+      initRangeControls();
+      refreshData();
+    }
+
+    function applyRange() {
+      const start = parseLocalInputValue(els.rangeStart.value) ?? startOfTodayMs(Date.now());
+      const end = parseLocalInputValue(els.rangeEnd.value) ?? Date.now();
+      state.range.liveToday = false;
+      state.range.startMs = Math.min(start, end);
+      state.range.endMs = Math.max(start, end);
+      renderRangeControls();
+      refreshData();
+    }
+
+    function dysonParams() {
+      const now = Date.now();
+      const startMs = state.range.liveToday ? startOfTodayMs(now) : state.range.startMs;
+      const endMs = state.range.liveToday ? now : state.range.endMs;
+      return new URLSearchParams({
+        start: String(Math.floor(startMs / 1000)),
+        end: String(Math.floor(endMs / 1000)),
+        detail: "1",
+      });
+    }
+
+    function readDrawPrefs() {
+      state.draw.atmosphere = els.drawAtmosphere.checked;
+      state.draw.orbits = els.drawOrbits.checked;
+      state.draw.fogDensity = Number(els.drawFog.value) || 0;
+      state.draw.starBrightness = Number(els.drawStarBrightness.value) || 1;
+      applyDrawPrefs();
+    }
+
+    function applyDrawPrefs() {
+      scene.fog.density = state.draw.fogDensity;
+      starLight.intensity = STAR_LIGHT_BASE * state.draw.starBrightness;
+      corona.material.opacity = 0.05 + state.draw.starBrightness * 0.07;
+      els.drawFogValue.textContent = state.draw.fogDensity.toFixed(3);
+      els.drawStarValue.textContent = state.draw.starBrightness.toFixed(1) + "x";
+      for (const planet of planets.values()) applyPlanetDrawPrefs(planet);
+    }
+
+    function applyPlanetDrawPrefs(planet) {
+      planet.atmosphere.visible = state.draw.atmosphere;
+      planet.orbit.visible = state.draw.orbits;
+    }
+
+    async function refreshData() {
+      try {
+        if (state.range.liveToday) renderRangeControls();
+        const dyson = await getJson("/api/dyson/state?" + dysonParams());
+        const serverNowMs = Date.parse(dyson.server_now);
+        if (Number.isFinite(serverNowMs)) syncServerClock(serverNowMs);
+        state.serviceDayStartMs = Date.parse(dyson.range?.start) || Date.parse(`${dyson.day}T00:00:00.000Z`) || state.serviceDayStartMs;
+        state.targetTokens = Number(dyson.totals?.tokens || 0);
+        state.targetClouds = Number(dyson.totals?.clouds || 0);
+        state.structureBlocks = Number(dyson.totals?.structure_blocks || 0);
+        state.targetFreeClouds = Number(dyson.totals?.free_clouds || 0);
+        if (syncSettledClouds(dyson.range?.start || dyson.day, dyson.totals?.settled_clouds, dyson.totals?.free_clouds)) {
+          resetServiceReplay();
+        }
+        syncServicePlanets(dyson.agents || []);
+        els.statusLine.textContent = "live " + new Date().toLocaleTimeString();
+      } catch (error) {
+        els.statusLine.textContent = "api error: " + (error?.message || String(error));
+      }
+    }
+
+    function syncSettledClouds(day, settledClouds, targetFreeClouds) {
+      const target = clamp(Math.floor(Number(targetFreeClouds || 0)), 0, FREE_CLOUD_MAX);
+      const settled = clamp(Math.floor(Number(settledClouds || 0)), 0, target);
+      if (state.serviceDay !== day) {
+        state.serviceDay = day || "";
+        state.visualClouds = settled;
+        state.freeClouds = settled;
+        clouds.geometry.setDrawRange(0, settled);
+        return true;
+      }
+      state.serviceDay = day || "";
+      if (state.visualClouds > target) {
+        if (!hasReplayWork()) {
+          state.visualClouds = target;
+          state.freeClouds = target;
+          clouds.geometry.setDrawRange(0, target);
+        }
+        return false;
+      }
+      if (settled > state.visualClouds && !hasReplayWork()) {
+        state.visualClouds = settled;
+        state.freeClouds = settled;
+        clouds.geometry.setDrawRange(0, settled);
+      }
+      return false;
+    }
+
+    function syncServicePlanets(serviceAgents) {
+      const rows = serviceAgents.map((agent) => ({
+        agent_key: agent.agent_key,
+        source_agent: agent.source_agent,
+        host_id: agent.host_id,
+        workspace_id: agent.workspace_id,
+        session_id: agent.session_id,
+        status: agent.status,
+        last_event_at: agent.current_batch?.started_at || agent.batches?.at(-1)?.started_at || new Date().toISOString(),
+        summary: agent.summary || { username: agent.source_agent, meta: { agent_status: agent.status } },
+        batches: agent.batches || [],
+      }));
+      const usageByAgent = new Map();
+      for (const agent of serviceAgents) {
+        usageByAgent.set(agent.agent_key, Number(agent.total_clouds || 0));
+        usageByAgent.set(agent.source_agent, Number(agent.total_clouds || 0));
+      }
+      syncPlanets(rows, usageByAgent);
+    }
+
+    function resetServiceReplay() {
+      state.pendingByAgent.clear();
+      state.agentCloudTargets.clear();
+      state.serviceSeeded = false;
+      for (const planet of planets.values()) clearPlanetShots(planet);
+    }
+
+    function hasReplayWork() {
+      for (const pending of state.pendingByAgent.values()) {
+        if (pending > 0) return true;
+      }
+      for (const planet of planets.values()) {
+        if (planet.shots.length) return true;
+      }
+      return false;
+    }
+
+    function clearPlanetShots(planet) {
+      for (let i = planet.shots.length - 1; i >= 0; i -= 1) removeShotAt(planet, i);
+      planet.shotIds.clear();
+      planet.emitAccumulator = 0;
+    }
+
+    function syncPlanets(agentRows, usageByAgent) {
+      const apiSources = new Set(agentRows.map((row) => row.source_agent || row.agent_key));
+      const debugRows = [...state.debugAgents.values()].filter((row) => !apiSources.has(row.source_agent || row.agent_key));
+      const rows = [...agentRows, ...debugRows].slice(0, MAX_PLANETS);
+      if (!rows.length && state.targetTokens > 0) {
+        rows.push({
+          agent_key: "cultivagent:local:default:unknown:",
+          source_agent: "cultivagent",
+          host_id: "local",
+          workspace_id: "default",
+          session_id: "unknown",
+          status: "ok",
+          last_event_at: new Date().toISOString(),
+          summary: { username: "local", meta: { agent_status: "running" } },
+        });
+      }
+      const nextKeys = new Set(rows.map((row) => row.agent_key));
+      for (const [key, planet] of planets) {
+        if (nextKeys.has(key)) continue;
+        root.remove(planet.pivot);
+        root.remove(planet.orbit);
+        scene.remove(planet.statusRing);
+        planet.orbit.geometry.dispose();
+        planet.orbit.material.dispose();
+        planet.atmosphere.material.dispose();
+        for (const shot of planet.shots) {
+          scene.remove(shot.trail);
+          scene.remove(shot.projectile);
+          shot.trail.material.dispose();
+          shot.projectile.material.dispose();
+        }
+        planets.delete(key);
+        const index = planetMeshes.indexOf(planet.mesh);
+        if (index >= 0) planetMeshes.splice(index, 1);
+      }
+      rows.forEach((row, index) => {
+        const key = row.agent_key;
+        let planet = planets.get(key);
+        if (!planet) {
+          planet = createPlanet(key, index);
+          planets.set(key, planet);
+          planetMeshes.push(planet.mesh);
+        }
+        planet.index = index;
+        planet.row = row;
+        planet.status = statusOf(row);
+        planet.serviceDriven = Array.isArray(row.batches);
+        planet.serviceBatches = planet.serviceDriven ? liveServiceBatches(row.batches) : [];
+        // mesh 走 makeCelestialMaterial 的 ShaderMaterial（无 color/emissive 属性，勿调 .color/.emissive）；
+        // status 颜色由 updatePlanetVisual 通过 statusRing / atmosphere / orbit 表达
+        const nextTarget = Math.max(0, Math.floor(usageByAgent.get(key) || usageByAgent.get(row.source_agent) || 0));
+        const previousTarget = state.agentCloudTargets.get(key);
+        const replayClouds = planet.serviceDriven ? 0 : previousTarget == null
+          ? (state.serviceSeeded ? nextTarget : 0)
+          : Math.max(0, nextTarget - previousTarget);
+        if (replayClouds > 0) {
+          state.pendingByAgent.set(key, (state.pendingByAgent.get(key) || 0) + replayClouds);
+        }
+        state.agentCloudTargets.set(key, nextTarget);
+      });
+      state.serviceSeeded = true;
+      state.agents = rows;
+      renderAgentRows();
+    }
+
+    function liveServiceBatches(batches) {
+      return (batches || []).filter((batch) =>
+        Number(batch.pending_clouds || 0) > 0 ||
+        Number(batch.emitted_clouds || 0) > Number(batch.settled_clouds || 0)
+      );
+    }
+
+    // 行星类型轮转：按 index 分配生成器类型（仿 PixelPlanets，3D 球面版）
+    const PLANET_TYPES = ["gas", "terran", "rocky", "ice"];
+
+    function createPlanet(key, index) {
+      const radius = CLOUD_RADIUS_MAX + 24 + (index % 9) * 18 + Math.floor(index / 9) * 8;
+      const size = 2.2 + (index % 5) * 0.28;
+      const speed = keplerSpeed(radius);
+      const baseAngle = index * 2.399963;
+      const inclination = THREE.MathUtils.degToRad([30, -30, 20, -20, 10, -10, 0][index % 7]);
+      const color = new THREE.Color(statusColor("idle"));
+      const pivot = new THREE.Group();
+      root.add(pivot);
+
+      const mesh = new THREE.Mesh(
+        new THREE.SphereGeometry(size, 48, 32),
+        makeCelestialMaterial({ type: PLANET_TYPES[index % PLANET_TYPES.length], seed: 1.0 + index * 0.37 })
+      );
+      mesh.position.copy(planetOrbitPosition({ radius, baseAngle, speed, inclination }, 0));
+      mesh.userData.kind = "planet";
+      mesh.userData.key = key;
+      pivot.add(mesh);
+
+      const atmosphere = new THREE.Mesh(
+        atmosphereGeometry,
+        new THREE.MeshBasicMaterial({
+          color,
+          transparent: true,
+          opacity: 0.16,
+          depthWrite: false,
+          blending: THREE.AdditiveBlending,
+        })
+      );
+      atmosphere.scale.setScalar(size * 1.28);
+      mesh.add(atmosphere);
+
+      const orbit = new THREE.LineLoop(
+        buildOrbitGeometry(radius),
+        new THREE.LineBasicMaterial({ color: 0x7fb8ff, transparent: true, opacity: 0.2, depthWrite: false })
+      );
+      orbit.rotation.x = inclination;
+      root.add(orbit);
+
+      const statusRing = new THREE.Mesh(
+        ringGeometry,
+        new THREE.MeshBasicMaterial({ color: 0x61dafb, transparent: true, opacity: 0.0, depthWrite: false, blending: THREE.AdditiveBlending })
+      );
+      scene.add(statusRing);
+
+      const planet = {
+        key, index, pivot, mesh, atmosphere, orbit, statusRing,
+        radius, size, speed, baseAngle, inclination, color, shots: [], shotIds: new Set(),
+        worldPosition: new THREE.Vector3(),
+        emitAccumulator: 0, emitSeed: 0, serviceDriven: false, serviceBatches: [],
+      };
+      applyPlanetDrawPrefs(planet);
+      return planet;
+    }
+
+    // 行星视觉更新：颜色 / 状态环 / 大气 / 轨道。无炮塔——粒子从球心出发（见 spawnCloudShot）。
+    function updatePlanetVisual(planet, t) {
+      const status = planet.status || "idle";
+      planet.color.set(statusColor(status));
+      planet.statusRing.material.color.copy(planet.color);
+      planet.atmosphere.material.color.copy(planet.color);
+      planet.orbit.material.color.copy(planet.color);
+      applyPlanetDrawPrefs(planet);
+      const pulse = statusPulse(status, t);
+      planet.statusRing.material.opacity = pulse;
+      planet.atmosphere.material.opacity = state.draw.atmosphere ? 0.12 + pulse * 0.18 : 0;
+      planet.orbit.material.opacity = state.draw.orbits ? 0.16 : 0;
+      planet.statusRing.position.copy(planet.worldPosition);
+      planet.statusRing.scale.setScalar(planet.size * (1.58 + pulse * 0.2));
+      planet.statusRing.quaternion.copy(camera.quaternion);
+    }
+
+    function statusPulse(status, t) {
+      if (status === "idle" || status === "done") return 0.12;
+      if (status === "waiting_approval" || status === "waiting_user") return 0.2 + Math.sin(t * 1.6) * 0.08;
+      if (status === "error") return 0.3 + Math.abs(Math.sin(t * 8)) * 0.28;
+      if (status === "tool_calling") return 0.32 + Math.abs(Math.sin(t * 7)) * 0.18;
+      if (status === "streaming") return 0.42 + Math.sin(t * 3) * 0.05;
+      if (status === "compacting") return 0.28 + Math.sin(t * 2.2) * 0.14;
+      if (status === "delegating") return 0.34 + Math.sin(t * 4) * Math.sin(t * 1.3) * 0.12;
+      return 0.34 + Math.sin(t * 5) * 0.12;
+    }
+
+    function updateEmissionQueue(planet, source, dt) {
+      if (planet.serviceDriven) return;
+      let pending = state.pendingByAgent.get(planet.key) || 0;
+      if (pending <= 0) {
+        planet.emitAccumulator = 0;
+        renderDebugQueue(planet, 0);
+        return;
+      }
+      planet.emitAccumulator += dt * CLOUD_EMIT_RATE;
+      while (planet.emitAccumulator >= 1 && pending > 0 && planet.shots.length < MAX_ACTIVE_SHOTS) {
+        const shotSeed = planet.emitSeed++;
+        const trajectory = cloudTrajectoryFor(source, shotSeed, serviceSeconds() + SHOT_DURATION);
+        if (!trajectory) break;
+        spawnCloudShot(planet, source, trajectory, { seed: shotSeed, cloudValue: 1 });
+        pending -= 1;
+        planet.emitAccumulator -= 1;
+      }
+      if (planet.shots.length >= MAX_ACTIVE_SHOTS) {
+        planet.emitAccumulator = Math.min(planet.emitAccumulator, 1);
+      }
+      state.pendingByAgent.set(planet.key, pending);
+      renderDebugQueue(planet, pending);
+    }
+
+    function renderDebugQueue(planet, pending) {
+      if (planet.key !== debugAgent()) return;
+      els.debugLog.textContent = `visual beam: pending ${nf.format(pending)} / active ${nf.format(planet.shots.length)} @ ${CLOUD_EMIT_RATE}/s`;
+    }
+
+    function syncServiceShots(planet) {
+      if (!planet.serviceDriven || !planet.serviceBatches.length) return;
+      const nowMs = serviceNowMs();
+      for (const batch of planet.serviceBatches) {
+        const startedMs = Date.parse(batch.started_at);
+        const emitRate = Number(batch.emit_rate || CLOUD_EMIT_RATE);
+        const cloudCount = Math.floor(Number(batch.cloud_count || 0));
+        const shotCount = Math.floor(Number(batch.shot_count || cloudCount));
+        if (!Number.isFinite(startedMs) || !Number.isFinite(emitRate) || emitRate <= 0 || shotCount <= 0) continue;
+        const emitted = timedShotCount(nowMs - startedMs, emitRate, shotCount);
+        const settled = Math.min(emitted, timedShotCount(nowMs - startedMs - SHOT_DURATION * 1000, emitRate, shotCount));
+        const first = Math.max(settled, emitted - MAX_ACTIVE_SHOTS);
+        for (let index = first; index < emitted; index += 1) {
+          syncServiceShot(planet, batch, index, startedMs + (index / emitRate) * 1000, nowMs);
+        }
+      }
+    }
+
+    function timedShotCount(elapsedMs, rate, count) {
+      if (elapsedMs < 0) return 0;
+      return clamp(Math.floor((elapsedMs / 1000) * rate) + 1, 0, count);
+    }
+
+    function syncServiceShot(planet, batch, index, emittedAtMs, nowMs) {
+      const id = `${batch.batch_id}:${index}`;
+      if (planet.shotIds.has(id)) return;
+      const shotWorld = planetWorldAt(planet, serviceSecondsAt(emittedAtMs));
+      const seed = shotSeedFor(Number(batch.entry_seed || batch.launch_seed || 0), index);
+      const trajectory = cloudTrajectoryFor(shotWorld, seed, serviceSecondsAt(emittedAtMs + SHOT_DURATION * 1000));
+      if (!trajectory) return;
+      spawnCloudShot(planet, shotWorld, trajectory, {
+        id,
+        seed,
+        cloudValue: shotCloudValue(batch, index),
+        emittedAtMs,
+        progress: clamp((nowMs - emittedAtMs) / (SHOT_DURATION * 1000), 0, 1),
+      });
+    }
+
+    function shotCloudValue(batch, index) {
+      const clouds = Math.max(1, Math.floor(Number(batch.cloud_count || 1)));
+      const shots = Math.max(1, Math.floor(Number(batch.shot_count || clouds)));
+      return Math.max(1, Math.floor(((index + 1) * clouds) / shots) - Math.floor((index * clouds) / shots));
+    }
+
+    function shotSeedFor(batchSeed, index) {
+      return (Math.trunc(batchSeed) ^ Math.imul(index + 1, 0x9e3779b1)) >>> 0;
+    }
+
+    // planetCenter = 行星球心；trajectory 是本发直达最终 seed 的唯一抛物线。
+    function spawnCloudShot(planet, planetCenter, trajectory, options = {}) {
+      const color = planet.color.clone();
+      const projectile = new THREE.Mesh(
+        projectileGeometry,
+        new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0, depthWrite: false, blending: THREE.AdditiveBlending })
+      );
+      const trail = new THREE.Mesh(
+        trailGeometry,
+        new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0, depthWrite: false, blending: THREE.AdditiveBlending })
+      );
+      projectile.frustumCulled = false;
+      trail.frustumCulled = false;
+      scene.add(projectile, trail);
+
+      const source = planetCenter.clone();
+      const progress = Number(options.progress || 0);
+      const shot = {
+        id: options.id || "",
+        seedValue: Number(options.seed || 0),
+        cloudValue: Math.max(1, Math.floor(Number(options.cloudValue || 1))),
+        progress,
+        emittedAtMs: Number(options.emittedAtMs || 0),
+        source,
+        seed: trajectory.seed,
+        seedBase: trajectory.seedBase,
+        coefficients: trajectory.coefficients,
+        color,
+        projectile,
+        trail,
+        position: new THREE.Vector3(),
+        previousPosition: new THREE.Vector3(),
+      };
+      if (shot.id) planet.shotIds.add(shot.id);
+      planet.shots.push(shot);
+      return shot;
+    }
+
+    function updateShots(planet, dt) {
+      for (let i = planet.shots.length - 1; i >= 0; i -= 1) {
+        const shot = planet.shots[i];
+        shot.progress = shot.emittedAtMs
+          ? Math.min(1, Math.max(shot.progress, (serviceNowMs() - shot.emittedAtMs) / (SHOT_DURATION * 1000)))
+          : Math.min(1, shot.progress + dt / SHOT_DURATION);
+
+        const pos = shotPosition(shot, shot.progress, shot.position);
+        const prev = shotPosition(shot, Math.max(0, shot.progress - 0.018), shot.previousPosition);
+        shot.projectile.position.copy(pos);
+        updateShotAppearance(shot);
+
+        if (shot.progress < 0.025) {
+          shot.trail.material.opacity = 0;
+        } else {
+          orientCylinderBetween(shot.trail, prev, pos);
+        }
+
+        if (shot.progress >= 1) {
+          commitCloudPoints(shot.seedBase, shot.seedValue, shot.cloudValue);
+          spawnArrivalFlash(shot.seed);
+          removeShotAt(planet, i);
+        }
+      }
+    }
+
+    function spawnArrivalFlash(position) {
+      const mesh = new THREE.Mesh(
+        projectileGeometry,
+        new THREE.MeshBasicMaterial({
+          color: 0xffffff,
+          transparent: true,
+          opacity: 1,
+          depthWrite: false,
+          blending: THREE.AdditiveBlending,
+        }),
+      );
+      mesh.position.copy(position);
+      mesh.scale.setScalar(1.4);
+      scene.add(mesh);
+      arrivalFlashes.push({ mesh, age: 0 });
+    }
+
+    function updateArrivalFlashes(dt) {
+      for (let i = arrivalFlashes.length - 1; i >= 0; i -= 1) {
+        const flash = arrivalFlashes[i];
+        flash.age += dt;
+        const t = Math.min(1, flash.age / 0.3);
+        flash.mesh.scale.setScalar(THREE.MathUtils.lerp(1.4, 22, smoothstep(t)));
+        flash.mesh.material.opacity = 1 - t;
+        if (t < 1) continue;
+        scene.remove(flash.mesh);
+        flash.mesh.material.dispose();
+        arrivalFlashes.splice(i, 1);
+      }
+    }
+
+    function removeShotAt(planet, index) {
+      const shot = planet.shots[index];
+      if (!shot) return;
+      scene.remove(shot.trail, shot.projectile);
+      shot.trail.material.dispose();
+      shot.projectile.material.dispose();
+      planet.shots.splice(index, 1);
+      if (shot.id) planet.shotIds.delete(shot.id);
+    }
+
+    // 单段直达：从行星球心沿 180° 重力抛物线直接落入最终 seed。
+    function shotPosition(shot, progress, out) {
+      return parabolaPoint(shot.source, shot.coefficients, progress, out);
+    }
+
+    // 单 obj 外观：渐入不淡出；到达前变白，到达时另起扩散大闪。
+    function updateShotAppearance(shot) {
+      const mat = shot.projectile.material;
+      const base = shot.color;
+      const fadeIn = Math.min(1, shot.progress / SHOT_FLASH_RATIO);
+
+      shot.projectile.scale.setScalar(0.72 + fadeIn * 0.28);
+
+      if (shot.progress > 1 - SHOT_FLASH_RATIO) {
+        const k = (shot.progress - (1 - SHOT_FLASH_RATIO)) / SHOT_FLASH_RATIO;
+        mat.color.setRGB(
+          THREE.MathUtils.lerp(base.r, 1, k),
+          THREE.MathUtils.lerp(base.g, 1, k),
+          THREE.MathUtils.lerp(base.b, 1, k),
+        );
+      } else {
+        mat.color.copy(base);
+      }
+
+      // 不透明度：仅渐入不淡出，到达闪白略提亮
+      let opacity = 0.88 * fadeIn;
+      if (shot.progress > 1 - SHOT_FLASH_RATIO) {
+        const k = (shot.progress - (1 - SHOT_FLASH_RATIO)) / SHOT_FLASH_RATIO;
+        opacity = Math.min(1, 0.88 + 0.12 * k);
+      }
+      mat.opacity = opacity;
+      shot.trail.material.color.copy(mat.color);
+      shot.trail.material.opacity = shot.progress < 0.025 ? 0 : 0.46 * fadeIn;
+    }
+
+    function commitCloudPoints(seedBase, seed, count) {
+      let index = Math.floor(state.visualClouds);
+      const end = Math.min(FREE_CLOUD_MAX, index + count);
+      for (let offset = 0; index < end; index += 1, offset += 1) {
+        setCloudSeed(index, offset === 0 ? seedBase : nearbyCloudSeed(seedBase, seed, offset));
+      }
+      state.visualClouds = index;
+      state.freeClouds = index;
+      clouds.geometry.setDrawRange(0, index);
+      cloudGeometry.attributes.position.needsUpdate = true;
+    }
+
+    function setCloudSeed(index, seedBase) {
+      const radius = Math.hypot(seedBase.x, seedBase.z);
+      cloudSeedPositions[index * 3] = seedBase.x;
+      cloudSeedPositions[index * 3 + 1] = seedBase.y;
+      cloudSeedPositions[index * 3 + 2] = seedBase.z;
+      cloudRadius[index] = radius;
+      cloudCosTheta0[index] = seedBase.x / radius;
+      cloudSinTheta0[index] = seedBase.z / radius;
+      cloudBucket[index] = cloudBucketForRadius(radius);
+      const world = cloudWorldAt(index, serviceSeconds());
+      const positions = cloudGeometry.attributes.position.array;
+      positions[index * 3] = world.x;
+      positions[index * 3 + 1] = world.y;
+      positions[index * 3 + 2] = world.z;
+    }
+
+    function nearbyCloudSeed(seedBase, seed, offset) {
+      const radius = clamp(
+        Math.hypot(seedBase.x, seedBase.z) + (random01(seed + offset * 31) - 0.5) * 4,
+        CLOUD_RADIUS_MIN,
+        CLOUD_RADIUS_MAX,
+      );
+      const point = seedBase.clone().setY(0).normalize()
+        .applyAxisAngle(Y_AXIS, (random01(seed + offset * 47) - 0.5) * 0.08)
+        .multiplyScalar(radius);
+      point.y = clamp(seedBase.y + (random01(seed + offset * 59) - 0.5) * 1.2, -radius * 0.17, radius * 0.17);
+      return point;
+    }
+
+    function cloudTrajectoryFor(source, seed, arrivalTime) {
+      return buildShotTrajectory(source, seed, arrivalTime, {
+        arcScale: TRANSFER_ARC_SCALE,
+        cloudRadiusMin: CLOUD_RADIUS_MIN,
+        cloudRadiusMax: CLOUD_RADIUS_MAX,
+        orbitSpeedForRadius: (radius) => bucketOmega[cloudBucketForRadius(radius)],
+        random01,
+        tangentCos: HORIZONTAL_TANGENT_COS,
+      });
+    }
+
+    function smoothstep(t) {
+      return t * t * (3 - 2 * t);
+    }
+
+    function clamp(value, min, max) {
+      return Math.max(min, Math.min(max, value));
+    }
+
+    function orientCylinderBetween(mesh, a, b) {
+      const delta = b.clone().sub(a);
+      const length = delta.length();
+      if (length <= 0.001) {
+        mesh.material.opacity = 0;
+        return;
+      }
+      mesh.position.copy(a).addScaledVector(delta, 0.5);
+      mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), delta.normalize());
+      mesh.scale.set(1, length, 1);
+    }
+
+    function updateHover() {
+      raycaster.setFromCamera(state.mouse, camera);
+      const hits = raycaster.intersectObjects([star, ...planetMeshes], false);
+      const hit = hits[0]?.object;
+      state.hover = hit || null;
+      if (!hit) {
+        els.tooltip.style.display = "none";
+        return;
+      }
+      els.tooltip.style.display = "block";
+      els.tooltip.style.left = Math.min(window.innerWidth - els.tooltip.offsetWidth - 8, state.pointer.x + 14) + "px";
+      els.tooltip.style.top = Math.min(window.innerHeight - els.tooltip.offsetHeight - 8, state.pointer.y + 14) + "px";
+      els.tooltip.innerHTML = hit.userData.kind === "star" ? starTooltip() : planetTooltip(hit.userData.key);
+    }
+
+    function starTooltip() {
+      const rows = state.agents.slice(0, 10).map((row) => {
+        const status = statusOf(row);
+        return `${escapeHtml(agentName(row))} <span class="mono">${escapeHtml(row.source_agent)} / ${escapeHtml(status)}</span>`;
+      }).join("<br>");
+      return `<strong>恒星 / 今日系统</strong>
+        <div class="mono">tokens ${nf.format(state.targetTokens)} / clouds ${nf.format(state.targetClouds)}</div>
+        <div class="mono">blocks ${nf.format(state.structureBlocks)} / free clouds ${nf.format(state.targetFreeClouds)} / settled ${nf.format(state.freeClouds)}</div>
+        <div style="margin-top:7px">${rows || '<span class="mono">no agents</span>'}</div>`;
+    }
+
+    function planetTooltip(key) {
+      const planet = planets.get(key);
+      if (!planet) return "";
+      const row = planet.row;
+      return `<strong>${escapeHtml(agentName(row))}</strong>
+        <div class="mono">agent ${escapeHtml(row.source_agent)}</div>
+        <div class="mono">status ${escapeHtml(statusOf(row))}</div>
+        <div class="mono">session ${escapeHtml(row.session_id || "unknown")}</div>
+        <div class="mono">clouds ${nf.format(state.agentCloudTargets.get(key) || 0)}</div>`;
+    }
+
+    function renderHud() {
+      els.tokenValue.textContent = short.format(state.targetTokens);
+      els.cloudValue.textContent = short.format(state.targetClouds);
+      els.shellValue.textContent = short.format(state.structureBlocks + (state.visualStructureBlocks || 0));
+      els.freeValue.textContent = short.format(state.targetFreeClouds);
+      els.clockLine.textContent = `1 cloud = ${TOKEN_PER_CLOUD} tokens / 1 block = 1000万 tokens`;
+    }
+
+    function renderAgentRows() {
+      els.agentCount.textContent = String(state.agents.length);
+      els.agentRows.innerHTML = state.agents.map((row) => {
+        const status = statusOf(row);
+        const color = statusColor(status);
+        return `<div class="agent-row">
+          <span class="dot" style="color:${color};background:${color}"></span>
+          <span>
+            <span class="agent-name">${escapeHtml(agentName(row))}</span>
+            <span class="agent-meta">${escapeHtml(row.source_agent)} / ${escapeHtml(row.summary?.model || row.summary?.provider || "unknown")}</span>
+          </span>
+          <span class="agent-status">${escapeHtml(status)}</span>
+        </div>`;
+      }).join("");
+      renderDebugAgents();
+    }
+
+    function renderDebugAgents() {
+      const selected = els.debugAgent.value;
+      const defaults = ["codex", "claude-code", "opencode", "openclaw", "locus", "pi"];
+      const agents = [...new Set([...state.agents.map((row) => row.source_agent), ...defaults].filter(Boolean))];
+      els.debugAgent.innerHTML = agents.map((agent) => `<option value="${escapeHtml(agent)}">${escapeHtml(agent)}</option>`).join("");
+      els.debugAgent.value = agents.includes(selected) ? selected : agents[0] || "codex";
+    }
+
+    function debugTokens() {
+      return Math.max(100, Number(els.debugTokens.value) || 10000);
+    }
+
+    function debugAgent() {
+      return els.debugAgent.value || "codex";
+    }
+
+    function enqueueClouds(agent, clouds) {
+      const amount = Math.max(1, Math.floor(clouds));
+      ensureVisualAgent(agent);
+      state.pendingByAgent.set(agent, (state.pendingByAgent.get(agent) || 0) + amount);
+      return amount;
+    }
+
+    function ensureVisualAgent(agent) {
+      if (planets.has(agent)) return;
+      const row = {
+        agent_key: agent,
+        source_agent: agent,
+        host_id: `debug-host-${agent}`,
+        workspace_id: "dyson-debug",
+        session_id: `dyson-debug-${agent}`,
+        status: "ok",
+        last_event_at: new Date().toISOString(),
+        summary: { username: `debug-${agent}`, meta: { agent_status: "running" } },
+      };
+      state.debugAgents.set(agent, row);
+      syncPlanets(state.agents, new Map(state.agentCloudTargets));
+    }
+
+    // 测试面板仅做视觉表现：不调用 /ingest，不写入线上数据
+    function postDebugStructure() {
+      const agent = debugAgent();
+      ensureVisualAgent(agent);
+      state.visualStructureBlocks = (state.visualStructureBlocks || 0) + 1;
+      els.debugLog.textContent = `visual structure: ${agent} +1 block`;
+    }
+
+    function postDebugStatus() {
+      const agent = debugAgent();
+      const agentStatus = els.debugStatus.value;
+      ensureVisualAgent(agent);
+      const planet = planets.get(agent);
+      if (planet) {
+        planet.status = agentStatus;
+        planet.row = planet.row || state.debugAgents.get(agent) || {};
+        planet.row.summary = planet.row.summary || {};
+        planet.row.summary.meta = planet.row.summary.meta || {};
+        planet.row.summary.meta.agent_status = agentStatus;
+      }
+      els.debugLog.textContent = `visual status: ${agent} -> ${agentStatus}`;
+    }
+
+    function fireDebugBeam() {
+      const agent = debugAgent();
+      const clouds = Math.max(1, Math.floor(debugTokens() / TOKEN_PER_CLOUD));
+      const queued = enqueueClouds(agent, clouds);
+      els.debugLog.textContent = `visual beam: ${agent} +${nf.format(queued)} clouds @ ${CLOUD_EMIT_RATE}/s`;
+    }
+
+    function buildOrbitGeometry(radius) {
+      const points = [];
+      for (let i = 0; i < 160; i += 1) {
+        const angle = (i / 160) * Math.PI * 2;
+        points.push(Math.cos(angle) * radius, 0, Math.sin(angle) * radius);
+      }
+      const geometry = new THREE.BufferGeometry();
+      geometry.setAttribute("position", new THREE.Float32BufferAttribute(points, 3));
+      geometry.computeBoundingSphere();
+      return geometry;
+    }
+
+    function buildCloudGeometry(count) {
+      const positions = new Float32Array(count * 3);
+      for (let i = 0; i < count; i += 1) {
+        const u = random01(i * 3 + 1);
+        const v = random01(i * 3 + 2);
+        const w = random01(i * 3 + 3);
+        const angle = u * Math.PI * 2;
+        const band = (v - 0.5) * 0.34;
+        const radius = CLOUD_RADIUS_MIN + Math.pow(w, 0.58) * (CLOUD_RADIUS_MAX - CLOUD_RADIUS_MIN);
+        positions[i * 3] = Math.cos(angle) * radius;
+        positions[i * 3 + 1] = Math.sin(band) * radius * 0.34 + (random01(i + 11) - 0.5) * 3.8;
+        positions[i * 3 + 2] = Math.sin(angle) * radius;
+      }
+      const geometry = new THREE.BufferGeometry();
+      const attr = new THREE.BufferAttribute(positions, 3);
+      attr.setUsage(THREE.StaticDrawUsage);
+      geometry.setAttribute("position", attr);
+      geometry.computeBoundingSphere();
+      return geometry;
+    }
+
+    function buildSkySphere(count) {
+      const group = new THREE.Group();
+      const shell = new THREE.Mesh(
+        new THREE.SphereGeometry(SKY_SPHERE_RADIUS, 48, 24),
+        new THREE.MeshBasicMaterial({
+          color: 0x02040a,
+          side: THREE.BackSide,
+          depthWrite: false,
+          fog: false,
+        })
+      );
+      shell.renderOrder = -100;
+      group.add(shell);
+
+      const positions = new Float32Array(count * 3);
+      for (let i = 0; i < count; i += 1) {
+        const radius = SKY_SPHERE_RADIUS * (0.94 + random01(i * 7 + 1) * 0.04);
+        const theta = random01(i * 7 + 2) * Math.PI * 2;
+        const z = random01(i * 7 + 3) * 2 - 1;
+        const band = Math.sqrt(Math.max(0, 1 - z * z));
+        positions[i * 3] = Math.cos(theta) * band * radius;
+        positions[i * 3 + 1] = z * radius * 0.78;
+        positions[i * 3 + 2] = Math.sin(theta) * band * radius;
+      }
+      const geometry = new THREE.BufferGeometry();
+      geometry.setAttribute("position", new THREE.BufferAttribute(positions, 3));
+      geometry.computeBoundingSphere();
+      const material = new THREE.PointsMaterial({
+        color: 0xffffff,
+        size: 0.82,
+        sizeAttenuation: true,
+        transparent: true,
+        opacity: 0.78,
+        depthWrite: false,
+        fog: false,
+        blending: THREE.AdditiveBlending,
+      });
+      const points = new THREE.Points(geometry, material);
+      points.frustumCulled = false;
+      points.renderOrder = -99;
+      group.add(points);
+      return group;
+    }
+
+    function buildSoccerShell(radius) {
+      const t = (1 + Math.sqrt(5)) / 2;
+      const verts = [
+        [-1, t, 0], [1, t, 0], [-1, -t, 0], [1, -t, 0],
+        [0, -1, t], [0, 1, t], [0, -1, -t], [0, 1, -t],
+        [t, 0, -1], [t, 0, 1], [-t, 0, -1], [-t, 0, 1],
+      ].map(([x, y, z]) => new THREE.Vector3(x, y, z).normalize());
+      const faces = [
+        [0, 11, 5], [0, 5, 1], [0, 1, 7], [0, 7, 10], [0, 10, 11],
+        [1, 5, 9], [5, 11, 4], [11, 10, 2], [10, 7, 6], [7, 1, 8],
+        [3, 9, 4], [3, 4, 2], [3, 2, 6], [3, 6, 8], [3, 8, 9],
+        [4, 9, 5], [2, 4, 11], [6, 2, 10], [8, 6, 7], [9, 8, 1],
+      ];
+      const directed = new Map();
+      const point = (a, b) => {
+        const key = `${a}:${b}`;
+        if (!directed.has(key)) {
+          directed.set(key, verts[a].clone().multiplyScalar(0.64).addScaledVector(verts[b], 0.36).normalize().multiplyScalar(radius));
+        }
+        return directed.get(key);
+      };
+      const panels = [];
+      const neighbors = new Map(verts.map((_, i) => [i, new Set()]));
+      for (const [a, b, c] of faces) {
+        neighbors.get(a).add(b).add(c);
+        neighbors.get(b).add(a).add(c);
+        neighbors.get(c).add(a).add(b);
+        panels.push({ keys: [`${a}:${b}`, `${b}:${a}`, `${b}:${c}`, `${c}:${b}`, `${c}:${a}`, `${a}:${c}`] });
+      }
+      for (let i = 0; i < verts.length; i += 1) {
+        const center = verts[i];
+        const axis = Math.abs(center.y) < 0.9 ? new THREE.Vector3(0, 1, 0) : new THREE.Vector3(1, 0, 0);
+        const right = new THREE.Vector3().crossVectors(axis, center).normalize();
+        const up = new THREE.Vector3().crossVectors(center, right).normalize();
+        const ordered = [...neighbors.get(i)].sort((a, b) => {
+          const da = verts[a].clone().sub(center);
+          const db = verts[b].clone().sub(center);
+          return Math.atan2(da.dot(up), da.dot(right)) - Math.atan2(db.dot(up), db.dot(right));
+        });
+        panels.push({ keys: ordered.map((n) => `${i}:${n}`) });
+      }
+      for (const panel of panels) {
+        panel.points = panel.keys.map((key) => {
+          const [a, b] = key.split(":").map(Number);
+          return point(a, b);
+        });
+        panel.center = panel.points.reduce((sum, p) => sum.add(p), new THREE.Vector3()).multiplyScalar(1 / panel.points.length).normalize().multiplyScalar(radius);
+      }
+      const ordered = orderAdjacentPanels(panels);
+      const panelPositions = [];
+      const outlinePositions = [];
+      const panelEnds = [];
+      const outlineEnds = [];
+      for (const panel of ordered) {
+        const center = panel.center.clone().multiplyScalar(1.012);
+        const outer = panel.points.map((p) => p.clone().multiplyScalar(1.012));
+        const inner = outer.map((p) => center.clone().lerp(p, 0.52).normalize().multiplyScalar(center.length()));
+        for (let i = 0; i < panel.points.length; i += 1) {
+          const a = outer[i];
+          const b = outer[(i + 1) % outer.length];
+          const ia = inner[i];
+          const ib = inner[(i + 1) % inner.length];
+          panelPositions.push(
+            a.x, a.y, a.z, b.x, b.y, b.z, ia.x, ia.y, ia.z,
+            b.x, b.y, b.z, ib.x, ib.y, ib.z, ia.x, ia.y, ia.z,
+          );
+          outlinePositions.push(a.x, a.y, a.z, b.x, b.y, b.z);
+          outlinePositions.push(ia.x, ia.y, ia.z, ib.x, ib.y, ib.z);
+        }
+        panelEnds.push(panelPositions.length / 3);
+        outlineEnds.push(outlinePositions.length / 3);
+      }
+      const panelGeometry = new THREE.BufferGeometry();
+      panelGeometry.setAttribute("position", new THREE.Float32BufferAttribute(panelPositions, 3));
+      panelGeometry.computeBoundingSphere();
+      const outlineGeometry = new THREE.BufferGeometry();
+      outlineGeometry.setAttribute("position", new THREE.Float32BufferAttribute(outlinePositions, 3));
+      outlineGeometry.computeBoundingSphere();
+      const panelsMesh = new THREE.Mesh(panelGeometry, new THREE.MeshBasicMaterial({
+        color: 0xf5c56a,
+        transparent: true,
+        opacity: 0,
+        side: THREE.DoubleSide,
+        depthWrite: false,
+        blending: THREE.AdditiveBlending,
+      }));
+      const outlines = new THREE.LineSegments(outlineGeometry, new THREE.LineBasicMaterial({
+        color: 0xffdd88,
+        transparent: true,
+        opacity: 0,
+        depthWrite: false,
+      }));
+      panelsMesh.geometry.setDrawRange(0, 0);
+      outlines.geometry.setDrawRange(0, 0);
+      return { panels: panelsMesh, outlines, panelEnds, outlineEnds, panelCount: ordered.length, visible: 0 };
+    }
+
+    function orderAdjacentPanels(panels) {
+      const edgeToPanels = new Map();
+      panels.forEach((panel, index) => {
+        panel.edgeKeys = [];
+        for (let i = 0; i < panel.keys.length; i += 1) {
+          const edge = [panel.keys[i], panel.keys[(i + 1) % panel.keys.length]].sort().join("|");
+          panel.edgeKeys.push(edge);
+          const rows = edgeToPanels.get(edge) || [];
+          rows.push(index);
+          edgeToPanels.set(edge, rows);
+        }
+      });
+      const start = panels.reduce((best, panel, index) => panel.center.z > panels[best].center.z ? index : best, 0);
+      const seen = new Set([start]);
+      const queue = [start];
+      const ordered = [];
+      while (queue.length) {
+        const index = queue.shift();
+        ordered.push(panels[index]);
+        for (const edge of panels[index].edgeKeys) {
+          for (const next of edgeToPanels.get(edge) || []) {
+            if (seen.has(next)) continue;
+            seen.add(next);
+            queue.push(next);
+          }
+        }
+      }
+      return ordered.concat(panels.filter((_, index) => !seen.has(index)));
+    }
+
+    function setSoccerShellVisible(shell, count) {
+      if (shell.visible === count) return;
+      shell.visible = count;
+      const panels = count > 0 ? shell.panelEnds[count - 1] : 0;
+      const outlines = count > 0 ? shell.outlineEnds[count - 1] : 0;
+      shell.panels.geometry.setDrawRange(0, panels);
+      shell.outlines.geometry.setDrawRange(0, outlines);
+    }
+
+    function statusOf(row) {
+      return row.summary?.meta?.agent_status || row.status || "idle";
+    }
+
+    function statusColor(status) {
+      if (status === "error") return "#ff5c78";
+      if (status.includes("waiting")) return "#ffb84d";
+      if (status === "tool_calling" || status === "streaming") return "#61dafb";
+      if (status === "receiving_input") return "#c792ea";
+      if (status === "loading_context") return "#82aaff";
+      if (status === "finalizing") return "#f78c6c";
+      if (status === "thinking" || status === "running" || status === "compacting" || status === "delegating") return "#f5c56a";
+      if (status === "done" || status === "idle") return "#44d19d";
+      return "#91a4b8";
+    }
+
+    function agentName(row) {
+      return row.summary?.username || row.summary?.meta?.username || row.host_id || row.source_agent || "agent";
+    }
+
+    function syncServerClock(serverNowMs) {
+      const offset = serverNowMs - Date.now();
+      state.serverClockOffsetTargetMs = offset;
+      if (!state.serverClockSynced) {
+        state.serverClockOffsetMs = offset;
+        state.serverClockSynced = true;
+      }
+    }
+
+    function smoothServerClock(dt) {
+      if (!state.serverClockSynced) return;
+      const diff = state.serverClockOffsetTargetMs - state.serverClockOffsetMs;
+      state.serverClockOffsetMs += clamp(diff, -dt * 250, dt * 250);
+    }
+
+    function serviceNowMs() {
+      return Date.now() + state.serverClockOffsetMs;
+    }
+
+    function serviceSeconds() {
+      if (!state.serviceDayStartMs) return timer.getElapsed();
+      return serviceSecondsAt(serviceNowMs());
+    }
+
+    function serviceSecondsAt(ms) {
+      return Math.max(0, (ms - (state.serviceDayStartMs || ms)) / 1000);
+    }
+
+    function planetWorldAt(planet, t) {
+      return planetOrbitPosition(planet, t);
+    }
+
+    function planetOrbitPosition(planet, t) {
+      const angle = planet.baseAngle + t * planet.speed;
+      const z = Math.sin(angle) * planet.radius;
+      return new THREE.Vector3(
+        Math.cos(angle) * planet.radius,
+        -z * Math.sin(planet.inclination),
+        z * Math.cos(planet.inclination),
+      );
+    }
+
+    function startOfTodayMs(ms) {
+      const date = new Date(ms);
+      date.setHours(0, 0, 0, 0);
+      return date.getTime();
+    }
+
+    function toLocalInputValue(ms) {
+      const date = new Date(ms);
+      const pad = (value) => String(value).padStart(2, "0");
+      return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+    }
+
+    function parseLocalInputValue(value) {
+      const ms = Date.parse(value || "");
+      return Number.isFinite(ms) ? ms : null;
+    }
+
+    async function getJson(url) {
+      const res = await fetch(url, { cache: "no-store" });
+      if (!res.ok) throw new Error(`${res.status} ${url}`);
+      return res.json();
+    }
+
+    function onResize() {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    }
+
+    function onPointerMove(event) {
+      state.pointer.x = event.clientX;
+      state.pointer.y = event.clientY;
+      state.mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+      state.mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+      if (state.dragging) {
+        const dx = event.clientX - state.lastPointer.x;
+        const dy = event.clientY - state.lastPointer.y;
+        if (state.dragMode === "orbit") {
+          state.cameraYaw -= dx * 0.005;
+          state.cameraPitch = THREE.MathUtils.clamp(state.cameraPitch + dy * 0.004, -0.85, 0.85);
+        } else if (state.dragMode === "pan") {
+          panCamera(dx, dy);
+        } else if (state.dragMode === "zoom") {
+          zoomCamera(dy * 0.01);
+        }
+        state.lastPointer.x = event.clientX;
+        state.lastPointer.y = event.clientY;
+      }
+    }
+
+    function onPointerDown(event) {
+      if (event.target.closest?.("a,button,input,select")) return;
+      event.preventDefault();
+      state.dragging = true;
+      state.dragMode = event.button === 1 ? "zoom" : event.button === 2 ? "pan" : "orbit";
+      state.lastPointer.x = event.clientX;
+      state.lastPointer.y = event.clientY;
+    }
+
+    function onPointerUp() {
+      state.dragging = false;
+      state.dragMode = "";
+    }
+
+    function onWheel(event) {
+      event.preventDefault();
+      zoomCamera(event.deltaY * 0.001);
+    }
+
+    function zoomCamera(delta) {
+      state.cameraDistance = THREE.MathUtils.clamp(state.cameraDistance * (1 + delta), 48, 420);
+    }
+
+    function panCamera(dx, dy) {
+      const forward = new THREE.Vector3().subVectors(state.cameraTarget, camera.position).normalize();
+      const right = new THREE.Vector3().crossVectors(forward, camera.up).normalize();
+      const up = new THREE.Vector3().crossVectors(right, forward).normalize();
+      const scale = state.cameraDistance * 0.0018;
+      state.cameraTarget.addScaledVector(right, dx * scale);
+      state.cameraTarget.addScaledVector(up, dy * scale);
+    }
+
+    function resetCamera() {
+      state.cameraYaw = 0;
+      state.cameraPitch = 0.38;
+      state.cameraDistance = 150;
+      state.cameraTarget.set(0, 0, 0);
+    }
+
+    function random01(seed) {
+      const x = Math.sin(seed * 12.9898) * 43758.5453123;
+      return x - Math.floor(x);
+    }
+
+    function tamedRotation(speed) {
+      return timer.getElapsed() * speed;
+    }
+
+    function escapeHtml(value) {
+      return String(value ?? "").replace(/[&<>"']/g, (ch) => ({
+        "&": "&amp;",
+        "<": "&lt;",
+        ">": "&gt;",
+        "\"": "&quot;",
+        "'": "&#39;",
+      })[ch]);
+    }
+  </script>
+</body>
+</html>

@@ -53,6 +53,21 @@
       font-size: 12px;
       font-weight: 600;
     }
+    .dyson-link {
+      height: 34px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: var(--card-solid);
+      color: var(--muted-foreground);
+      padding: 0 10px;
+      font-size: 12px;
+      font-weight: 700;
+      text-decoration: none;
+    }
+    .dyson-link:hover { color: var(--foreground); border-color: var(--border-strong); }
     .mode-tabs, .tabs-list {
       display: inline-flex;
       align-items: center;
@@ -483,6 +498,7 @@
         <div class="brand-subtitle">Agent hook and token usage monitor</div>
       </div>
       <div class="top-actions">
+        <a class="dyson-link" href="/dyson">Dyson</a>
         <select id="lang" aria-label="Language">
           <option value="zh">中文</option>
           <option value="en">English</option>
@@ -825,6 +841,7 @@
       { type: 'openclaw', agent: 'openclaw', label: 'OpenClaw', icon: BRAND.openclaw }
     ];
     const REFRESH_INTERVAL_OPTIONS_MS = [0, 5000, 10000, 30000, 60000];
+    const BACKFILL_OVERLAP_SECONDS = 10 * 60;
     const PRESETS = ['today', '1d', '7d', '14d', '30d'];
     const PRESET_LABELS = { today: '当天', '1d': '1d', '7d': '7d', '14d': '14d', '30d': '30d', custom: '日历筛选' };
     const i18n = {
@@ -893,8 +910,8 @@
         state.loadedStart = start;
       }
       if (end > state.loadedEnd) {
-        const overlapStart = Math.max(start, state.loadedEnd - 1);
-        await fetchEvents(overlapStart, end, state.loadedEnd - 1);
+        const overlapStart = Math.max(start, state.loadedEnd - BACKFILL_OVERLAP_SECONDS);
+        await fetchEvents(overlapStart, end);
         state.loadedEnd = end;
       }
     }
@@ -905,6 +922,7 @@
       params.set('start', String(start));
       params.set('end', String(end));
       params.set('limit', '20000');
+      params.set('compact', '1');
       if (since != null) params.set('since', String(since));
       const payload = await get('/api/events?' + params.toString());
       for (const event of payload.events || []) {
@@ -1475,6 +1493,8 @@
       ['start', 'end'].forEach((field) => {
         const dateInput = popover.querySelector('#' + field + 'DateInput');
         const timeInput = popover.querySelector('#' + field + 'TimeInput');
+        if (dateInput) dateInput.addEventListener('click', (event) => event.stopPropagation());
+        if (timeInput) timeInput.addEventListener('click', (event) => event.stopPropagation());
         if (dateInput) dateInput.addEventListener('change', (event) => {
           if (field === 'end' && d.liveEnd) return;
           const ts = parseDateInput(field === 'start' ? d.start : d.end, event.target.value);
@@ -1918,7 +1938,9 @@
     }
 
     document.addEventListener('click', (event) => {
-      const trigger = event.target.closest('.select-trigger');
+      const path = typeof event.composedPath === 'function' ? event.composedPath() : [];
+      const closest = (selector) => event.target.closest(selector) || path.find((node) => node?.nodeType === 1 && node.matches(selector));
+      const trigger = closest('.select-trigger');
       if (trigger) {
         const wrap = trigger.closest('.select-wrap');
         const next = !wrap.classList.contains('open');
@@ -1927,14 +1949,14 @@
         wrap.classList.toggle('open', next);
         return;
       }
-      if (event.target.closest('#dateTrigger')) {
+      if (closest('#dateTrigger')) {
         closeDropdowns();
         const popover = document.getElementById('datePopover');
         if (popover.classList.contains('hidden')) openDatePicker();
         else closeDatePicker();
         return;
       }
-      if (!event.target.closest('.select-wrap') && !event.target.closest('.date-wrap')) {
+      if (!closest('.select-wrap') && !closest('.date-wrap')) {
         closeDropdowns();
         closeDatePicker();
       }

@@ -1,5 +1,7 @@
 # Cultivagent Plugin 化改造 Spec
 
+> [English](./PLUGIN_SPEC.en.md) · [中文](./PLUGIN_SPEC.md)
+
 > 参照实现：`volcengine/OpenViking`（本地副本 `~/.openviking/openviking-repo`）。
 > 本 spec 的目录布局、manifest 字段、占位符渲染、install.sh 步骤均 1:1 对照 OpenViking 的真实文件，不发明字段。
 > 改造目标：让 cultivagent 像 OpenViking 一样，**一个 repo 内同时容纳 server + 多 agent plugin**，用户「装 plugin 即接入」，server 独立部署在远端（VPS / Cloudflare，HTTPS）并强制 auth。

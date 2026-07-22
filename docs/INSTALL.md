@@ -1,5 +1,7 @@
 # Cultivagent Install
 
+> [English](./INSTALL.md) · [中文](./INSTALL.zh.md)
+
 Cultivagent is a **pure passive ingest sink**: agents forward hook events to `POST /ingest`, the server stores them and renders a dashboard. No MCP, no agent-callable interface.
 
 ## 1. Run the server
@@ -64,13 +66,23 @@ Each agent has a one-line installer that writes `~/.cultivagent/config.json` (en
 
 > Windows: run the installers under **git-bash** (the bash from Git for Windows).
 
+For an existing hosted server, set the shared config once before running agent installers:
+
+```bash
+export CULTIVAGENT_ENDPOINT=https://cv.jthewl.cc
+export CULTIVAGENT_TOKEN=<token from the hosted server>
+export CULTIVAGENT_USERNAME=<machine label>
+```
+
+Both Claude Code and Codex installers read those env vars and write the same `~/.cultivagent/config.json`. If the file already exists, rerunning installers keeps the existing config unless you reconfigure interactively.
+
 ### Claude Code
 
 ```bash
 bash <(curl -fsSL https://raw.githubusercontent.com/JupiterTheWarlock/cultivagent/main/plugins/claude-code/setup-helper/install.sh)
 ```
 
-Manual: `claude plugin marketplace add <repo>/plugins` → `claude plugin install claude-code@cultivagent-plugins-local`. The Stop hook runs the session collector to report JSONL usage, so the installer does not write OTel variables into `~/.claude/settings.json` by default. Re-run the installer after upgrades to sync the installed plugin copy under `~/.cultivagent/repo`. See [plugins/claude-code/README.md](../plugins/claude-code/README.md).
+Manual from the repo root: `claude plugin marketplace add ./plugins` → `claude plugin install claude-code@cultivagent-plugins-local`. The Stop hook runs the session collector to report JSONL usage, so the installer does not write OTel variables into `~/.claude/settings.json` by default. Re-run the installer after upgrades to sync the installed plugin copy under `~/.cultivagent/repo`. See [plugins/claude-code/README.md](../plugins/claude-code/README.md).
 
 ### Codex
 
@@ -78,7 +90,33 @@ Manual: `claude plugin marketplace add <repo>/plugins` → `claude plugin instal
 bash <(curl -fsSL https://raw.githubusercontent.com/JupiterTheWarlock/cultivagent/main/plugins/codex/setup-helper/install.sh)
 ```
 
-Codex 0.130 does not inject a plugin-root env var, so the installer copies the plugin and renders `__CULTIVAGENT_PLUGIN_ROOT__` into an absolute path. The Stop hook runs the session collector to report usage, so `[otel]` is not written by default. See [plugins/codex/README.md](../plugins/codex/README.md).
+Codex 0.130 does not inject a plugin-root env var, so the installer copies the plugin and renders `__CULTIVAGENT_PLUGIN_ROOT__` into an absolute path. The Stop hook runs the session collector to report usage, so `[otel]` is not written by default. Re-run the installer after upgrades; it removes and re-adds `codex@cultivagent-plugins-local` so Codex's versioned plugin cache is refreshed. See [plugins/codex/README.md](../plugins/codex/README.md).
+
+After install, restart the agent app/CLI so hook changes are loaded.
+
+Quick checks after a Codex install:
+
+```bash
+codex plugin add codex@cultivagent-plugins-local --json
+node ~/.cultivagent/codex-marketplace/codex/scripts/session-collector.mjs --lookback-minutes 10 --include-incomplete --dry-run --json
+```
+
+The installed Codex shape should match `plugins/codex/README.md`: one Stop hook command (`hook.mjs stop`) and the collector launched inside `hook.mjs` with `--delay-ms 3000 --include-incomplete`.
+
+Claude Code check:
+
+```bash
+node ~/.cultivagent/repo/plugins/claude-code/scripts/status.mjs
+claude plugin list | grep cultivagent
+```
+
+If a Claude Code local marketplace plugin changed without a version bump, refresh the installed cache:
+
+```bash
+claude plugin marketplace update cultivagent-plugins-local
+claude plugin uninstall claude-code@cultivagent-plugins-local
+claude plugin install claude-code@cultivagent-plugins-local
+```
 
 ### OpenCode
 
@@ -105,6 +143,30 @@ Adds a `pi()` shell wrapper (or use `pi -e <file>` / package.json `pi.extensions
 ### OpenClaw
 
 Native plugin entry (TypeScript, build required). See [plugins/openclaw/README.md](../plugins/openclaw/README.md).
+
+### Locus
+
+Locus integration is a read-only collector. It does not modify Locus or install
+hooks into Locus; it reads the local `locus.db` and sends completed
+`usageUpdate` rows as `source_agent: "locus"`.
+
+```bash
+node plugins/locus/session-collector.mjs --dry-run --json
+node plugins/locus/session-collector.mjs --json
+```
+
+The collector uses the same `~/.cultivagent/config.json` and env priority as
+the other plugins. Auto-discovery checks common Locus data locations; override
+it when needed:
+
+```bash
+LOCUS_DB="D:/Apps/Locus/data/locus.db" node plugins/locus/session-collector.mjs --json
+```
+
+For a Locus View launcher, point the runner at this script and let the View only
+start/stop the runner and display its log. Closing the View should not stop the
+runner; only the runner's explicit Stop action should kill the process. See
+[plugins/locus/README.md](../plugins/locus/README.md).
 
 ## 3. Config priority
 

@@ -310,10 +310,20 @@ else
 fi
 
 if codex plugin add --help >/dev/null 2>&1; then
-  codex plugin add "$PLUGIN_ID" >/dev/null 2>&1 || info "plugin add: already installed or queued"
+  # Codex caches installed plugins by version. Reinstall on every run so hook
+  # changes are picked up even when the plugin version has not changed.
+  codex plugin remove "$PLUGIN_ID" >/dev/null 2>&1 || true
+  if ! codex plugin add "$PLUGIN_ID" >/dev/null 2>&1; then
+    err "codex plugin add failed for $PLUGIN_ID"
+    exit 1
+  fi
 else
-  codex plugin install "$PLUGIN_ID" >/dev/null 2>&1 || info "plugin install: already installed or queued"
+  if ! codex plugin install "$PLUGIN_ID" >/dev/null 2>&1; then
+    err "codex plugin install failed for $PLUGIN_ID"
+    exit 1
+  fi
 fi
+info "plugin installed/refreshed: $PLUGIN_ID"
 
 # --- 6. self-check ---
 heading 'Step 6/6 — self-check'

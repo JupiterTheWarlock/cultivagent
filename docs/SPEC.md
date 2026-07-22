@@ -1,5 +1,7 @@
 # Cultivagent Spec
 
+> [English](./SPEC.md) · [中文](./SPEC.zh.md)
+
 ## Goal
 
 Cultivagent collects local coding-agent lifecycle events and model usage into one self-hosted dashboard.
@@ -48,6 +50,10 @@ Cloudflare remains a later backend option for public plugin distribution and hos
 Only count completed model requests or official aggregate usage metrics.
 
 Do not count every lifecycle hook.
+
+## Game UI
+
+The Dyson game UI requirements live in [DYSON_GAME_UI.md](./DYSON_GAME_UI.md).
 
 ## Fixture Gate
 

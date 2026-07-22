@@ -3,5 +3,6 @@ data/*.sqlite-*
 node_modules/
 worker/public/
 .env
+.wrangler/
 .DS_Store
 *.log

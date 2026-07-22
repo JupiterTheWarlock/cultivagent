@@ -3,11 +3,21 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { hostname, tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import * as THREE from "three";
 import { createCultivagentServer } from "../src/server.mjs";
+import { buildDysonState } from "../src/dyson-state.mjs";
+import {
+  buildShotTrajectory,
+  firstPhaseIsValid,
+  parabolaPoint,
+  parabolaTangent,
+  tangentFor,
+} from "../src/games/dyson-trajectory.mjs";
 import { normalizeEvent, normalizeOtelLogs, translateLoopEvent } from "../src/normalize.mjs";
 import { collectSessionEventsFromFile } from "../plugins/codex/scripts/session-collector.mjs";
 import { collectClaudeSessionEvents } from "../plugins/claude-code/scripts/session-collector.mjs";
 import { collectOpenCodeEvents, parseMessageData as parseOpenCodeMessageData } from "../plugins/opencode/session-collector.mjs";
+import { collectLocusEvents } from "../plugins/locus/session-collector.mjs";
 import { baseEvent as claudeBaseEvent } from "../plugins/claude-code/scripts/lib.mjs";
 
 const dir = mkdtempSync(join(tmpdir(), "cultivagent-"));
@@ -15,6 +25,7 @@ const dbPath = join(dir, "test.sqlite");
 const server = createCultivagentServer({ dbPath, poolTtlMs: 100 });
 
 try {
+  verifyDysonTrajectories();
   await listen(server);
   const base = `http://127.0.0.1:${server.address().port}`;
 
@@ -184,6 +195,7 @@ try {
   assert.equal(translateLoopEvent("claude-code", "PreToolUse").loop_event, "tool.before");
   assert.equal(translateLoopEvent("pi", "before_provider_request").agent_status, "thinking");
   assert.equal(translateLoopEvent("openclaw", "subagent_spawned").agent_status, "delegating");
+  assert.equal(normalizeEvent({ source_agent: "locus" }).source_agent, "locus");
   const openClawUsage = normalizeEvent({
     source_agent: "openclaw",
     event_type: "llm_output",
@@ -302,13 +314,56 @@ try {
   assert.equal(opencodeEvents.length, 1);
   assert.equal(opencodeEvents[0].usage.total_tokens, 24);
 
+  const locusDb = join(dir, "locus.db");
+  const ldb = new DatabaseSync(locusDb);
+  ldb.exec(`
+    CREATE TABLE sessions (id TEXT PRIMARY KEY, workspace_id TEXT, agent_id TEXT);
+    CREATE TABLE session_runs (run_id TEXT PRIMARY KEY, session_id TEXT, status TEXT, started_at INTEGER, updated_at INTEGER, finished_at INTEGER);
+    CREATE TABLE messages (id TEXT, session_id TEXT, role TEXT, content TEXT, created_at INTEGER, metadata_json TEXT);
+    CREATE TABLE session_events (session_id TEXT, run_id TEXT, seq INTEGER, event_type TEXT, payload_json TEXT, created_at INTEGER, PRIMARY KEY (session_id, seq));
+  `);
+  ldb.prepare("INSERT INTO sessions VALUES (?, ?, ?)").run("locus-s1", "unity-test", "dev");
+  ldb.prepare("INSERT INTO session_runs VALUES (?, ?, ?, ?, ?, ?)").run("locus-r1", "locus-s1", "done", 1782864400, 1782864405, 1782864410);
+  ldb.prepare("INSERT INTO session_runs VALUES (?, ?, ?, ?, ?, ?)").run("locus-r2", "locus-s1", "running", 1782864500, 1782864505, null);
+  ldb.prepare("INSERT INTO messages VALUES (?, ?, ?, ?, ?, ?)").run("m1", "locus-s1", "assistant", "", 1782864408, JSON.stringify({
+    responseRequest: { model: "gpt-5.5" },
+  }));
+  ldb.prepare("INSERT INTO session_events VALUES (?, ?, ?, ?, ?, ?)").run("locus-s1", "locus-r1", 1, "usageUpdate", JSON.stringify({
+    type: "usageUpdate",
+    sessionId: "locus-s1",
+    inputTokens: 2,
+    outputTokens: 3,
+    cacheReadTokens: 4,
+    cacheWriteTokens: 5,
+    totalInputTokens: 20,
+    totalOutputTokens: 30,
+    totalCacheReadTokens: 40,
+    totalCacheWriteTokens: 50,
+    contextTokens: 123,
+    contextLimit: 456,
+  }), 1782864409);
+  ldb.prepare("INSERT INTO session_events VALUES (?, ?, ?, ?, ?, ?)").run("locus-s1", "locus-r2", 2, "usageUpdate", JSON.stringify({
+    type: "usageUpdate",
+    sessionId: "locus-s1",
+    inputTokens: 99,
+  }), 1782864509);
+  ldb.close();
+  const locusEvents = collectLocusEvents(locusDb, { machineName: "HOST", username: "desk", lookbackMinutes: 0 });
+  assert.equal(locusEvents.length, 1);
+  assert.equal(locusEvents[0].source_agent, "locus");
+  assert.equal(locusEvents[0].model, "gpt-5.5");
+  assert.equal(locusEvents[0].provider, "locus");
+  assert.equal(locusEvents[0].usage.total_tokens, 14);
+  assert.equal(locusEvents[0].meta.context_tokens, 123);
+  assert.equal(collectLocusEvents(locusDb, { includeIncomplete: true, lookbackMinutes: 0 }).length, 2);
+
   // plugin hooks.json 合法性（取代已移除的 generate-hook-config 测试）
   const claudeHooks = JSON.parse(readFileSync(new URL("../plugins/claude-code/hooks/hooks.json", import.meta.url), "utf8"));
   assert.ok(claudeHooks.hooks.SessionStart, "claude-code hooks.json missing SessionStart");
   assert.ok(claudeHooks.hooks.SessionEnd, "claude-code hooks.json missing SessionEnd");
   assert.ok(claudeHooks.hooks.PreToolUse, "claude-code hooks.json missing PreToolUse");
   assert.ok(claudeHooks.hooks.PostToolUse, "claude-code hooks.json missing PostToolUse");
-  assert.ok(claudeHooks.hooks.MessageDisplay, "claude-code hooks.json missing MessageDisplay");
+  assert.ok(claudeHooks.hooks.Stop, "claude-code hooks.json missing Stop");
   assert.match(claudeHooks.hooks.SessionStart[0].hooks[0].command, /\$\{CLAUDE_PLUGIN_ROOT\}/);
   assert.match(claudeHooks.hooks.Stop[0].hooks[1].command, /session-collector\.mjs/);
   const claudeToolEvent = claudeBaseEvent("claude-code", {
@@ -327,8 +382,12 @@ try {
   assert.match(claudeToolEvent.meta.tool_input_preview, /echo hi/);
   const codexHooks = JSON.parse(readFileSync(new URL("../plugins/codex/hooks/hooks.json", import.meta.url), "utf8"));
   assert.ok(codexHooks.hooks.Stop, "codex hooks.json missing Stop");
+  assert.equal(codexHooks.hooks.Stop[0].hooks.length, 1);
   assert.match(codexHooks.hooks.Stop[0].hooks[0].command, /__CULTIVAGENT_PLUGIN_ROOT__/);
-  assert.match(codexHooks.hooks.Stop[0].hooks[1].command, /session-collector\.mjs/);
+  const codexHookScript = readFileSync(new URL("../plugins/codex/scripts/hook.mjs", import.meta.url), "utf8");
+  assert.match(codexHookScript, /session-collector\.mjs/);
+  assert.match(codexHookScript, /--delay-ms/);
+  assert.match(codexHookScript, /--include-incomplete/);
 
   const agents = await get(`${base}/api/agents`);
   assert.equal(agents.agents.length, 3);
@@ -342,6 +401,165 @@ try {
   assert.match(dashboard, /data-i18n="user"/);
   assert.match(dashboard, /使用统计/);
   assert.match(dashboard, /请求统计/);
+  assert.match(dashboard, /href="\/dyson"/);
+  assert.match(dashboard, /composedPath/);
+  assert.match(dashboard, /BACKFILL_OVERLAP_SECONDS/);
+  const dyson = await text(`${base}/dyson`);
+  assert.match(dyson, /Cultivagent Dyson/);
+  assert.match(dyson, /TOKEN_PER_CLOUD = 100/);
+  assert.match(dyson, /STRUCTURE_TOKEN_COST = 10_000_000/);
+  assert.match(dyson, /dyson-debug/);
+  assert.match(dyson, /debugStructureBtn/);
+  assert.match(dyson, /\/api\/dyson\/state/);
+  assert.match(dyson, /buildSkySphere/);
+  assert.match(dyson, /SKY_STAR_COUNT/);
+  assert.match(dyson, /skySphere\.position\.copy\(camera\.position\)/);
+  assert.match(dyson, /syncSettledClouds/);
+  assert.match(dyson, /detail: "1"/);
+  assert.match(dyson, /smoothServerClock/);
+  assert.match(dyson, /syncServerClock/);
+  assert.match(dyson, /syncServiceShots/);
+  assert.match(dyson, /buildShotTrajectory/);
+  assert.match(dyson, /structureGroup\.rotation\.y = -tamedRotation/);
+  assert.match(dyson, /spawnArrivalFlash/);
+  assert.doesNotMatch(dyson, /horizontalOrbitArc/);
+  assert.doesNotMatch(dyson, /horizontalHermite/);
+  assert.doesNotMatch(dyson, /SHOT_PHASE1_RATIO/);
+  assert.doesNotMatch(dyson, /flashRed/);
+  assert.match(dyson, /commitCloudPoints/);
+  assert.match(dyson, /new THREE\.Timer/);
+  assert.doesNotMatch(dyson, /new THREE\.Clock/);
+  assert.match(dyson, /emittedAtMs/);
+  assert.match(dyson, /resetServiceReplay/);
+  assert.match(dyson, /serviceSeeded/);
+  assert.match(dyson, /replayClouds/);
+  assert.match(dyson, /planetOrbitPosition/);
+  assert.match(dyson, /\[30, -30, 20, -20, 10, -10, 0\]/);
+  assert.match(dyson, /orbit\.rotation\.x = inclination/);
+  assert.doesNotMatch(dyson, /planet\.pivot\.rotation\.y = planet\.baseAngle/);
+  assert.doesNotMatch(dyson, /orbit\.rotation\.z =/);
+  assert.match(dyson, /color: 0xffffff/);
+  assert.match(dyson, /rangeStart/);
+  assert.match(dyson, /drawAtmosphere/);
+  assert.match(dyson, /buildOrbitGeometry/);
+  assert.match(dyson, /STAR_LIGHT_BASE/);
+  assert.doesNotMatch(dyson, /serviceShotSignature/);
+  assert.doesNotMatch(dyson, /nextCloudTarget/);
+  assert.doesNotMatch(dyson, /batchEntry/);
+  assert.doesNotMatch(dyson, /state\.visualClouds = Math\.max\(0, Math\.min\(FREE_CLOUD_MAX, Number\(dyson\.totals\?\.settled_clouds/);
+  assert.doesNotMatch(dyson, /state\.cameraYaw \+= 0\.0005/);
+  await post(`${base}/ingest`, {
+    event_id: "dyson-launch-1",
+    source_agent: "codex",
+    source_surface: "test",
+    event_type: "model_response",
+    occurred_at: "2026-07-02T00:00:00.000Z",
+    host_id: "dyson-host",
+    workspace_id: "dyson-workspace",
+    session_id: "dyson-session",
+    model: "gpt-dyson",
+    usage: { input_tokens: 10000 },
+    meta: { machine_name: "dyson-machine", agent_status: "done" },
+  });
+  await post(`${base}/ingest`, {
+    event_id: "dyson-status-only",
+    source_agent: "opencode",
+    source_surface: "test",
+    event_type: "PreToolUse",
+    occurred_at: "2026-07-02T00:00:02.000Z",
+    host_id: "dyson-host-2",
+    workspace_id: "dyson-workspace",
+    session_id: "dyson-session-2",
+    meta: { machine_name: "dyson-machine-2" },
+  });
+  const dysonCompact = await get(`${base}/api/dyson/state?day=2026-07-02&now=2026-07-02T00:00:05.000Z`);
+  assert.equal("batches" in dysonCompact.agents[0], false);
+  assert.equal("active_shots" in dysonCompact.agents[0], false);
+  const dysonState = await get(`${base}/api/dyson/state?day=2026-07-02&now=2026-07-02T00:00:05.000Z&detail=1`);
+  assert.equal(dysonState.totals.tokens, 10000);
+  assert.equal(dysonState.totals.clouds, 100);
+  assert.equal(dysonState.totals.free_clouds, 100);
+  assert.equal(dysonState.totals.settled_clouds, 0);
+  assert.equal(dysonState.agents.length, 1);
+  const launchingAgent = dysonState.agents.find((agent) => agent.source_agent === "codex");
+  assert.equal(launchingAgent.agent_key, "codex:dyson-host");
+  assert.equal(launchingAgent.total_clouds, 100);
+  assert.equal(launchingAgent.emitted_clouds, 51);
+  assert.equal(launchingAgent.pending_clouds, 49);
+  assert.equal(launchingAgent.current_batch.batch_id, "dyson-launch-1:codex:dyson-host");
+  assert.equal(launchingAgent.current_batch.phase, "emitting");
+  assert.equal(launchingAgent.current_batch.entry_seed, launchingAgent.batches[0].entry_seed);
+  assert.equal(launchingAgent.active_shots.length, 51);
+  assert.equal(launchingAgent.active_shots[0].cloud_index, 0);
+  assert.equal(launchingAgent.active_shots.at(-1).cloud_index, 50);
+  const dysonNearRing = await get(`${base}/api/dyson/state?day=2026-07-02&now=2026-07-02T00:00:09.650Z&detail=1`);
+  const nearRingAgent = dysonNearRing.agents.find((agent) => agent.source_agent === "codex");
+  assert.equal(nearRingAgent.settled_clouds, 1);
+  assert.equal(nearRingAgent.active_shots[0].cloud_index, 1);
+  assert.equal(nearRingAgent.active_shots.some((shot) => shot.phase !== "shot"), false);
+  const statusOnlyAgent = dysonState.agents.find((agent) => agent.source_agent === "opencode");
+  assert.equal(statusOnlyAgent, undefined);
+  const dysonStatusOnlyRange = await get(`${base}/api/dyson/state?start=2026-07-02T00:00:01.500Z&end=2026-07-02T00:00:02.500Z&now=2026-07-02T00:00:05.000Z`);
+  assert.equal(dysonStatusOnlyRange.totals.tokens, 0);
+  assert.equal(dysonStatusOnlyRange.agents.length, 0);
+  const dysonAfterRefresh = await get(`${base}/api/dyson/state?day=2026-07-02&now=2026-07-02T00:00:05.000Z&detail=1`);
+  const launchingAfterRefresh = dysonAfterRefresh.agents.find((agent) => agent.source_agent === "codex");
+  assert.deepEqual(launchingAfterRefresh.current_batch, launchingAgent.current_batch);
+  assert.deepEqual(launchingAfterRefresh.active_shots, launchingAgent.active_shots);
+  await post(`${base}/ingest`, {
+    event_id: "dyson-launch-model-2",
+    source_agent: "codex",
+    source_surface: "test",
+    event_type: "model_response",
+    occurred_at: "2026-07-02T00:00:01.000Z",
+    host_id: "dyson-host",
+    workspace_id: "dyson-workspace-2",
+    session_id: "dyson-session-2",
+    model: "gpt-dyson-other",
+    usage: { input_tokens: 100 },
+    meta: { machine_name: "dyson-machine", agent_status: "done" },
+  });
+  const dysonGrouped = await get(`${base}/api/dyson/state?day=2026-07-02&now=2026-07-02T00:00:05.000Z`);
+  assert.equal(dysonGrouped.totals.tokens, 10100);
+  assert.equal(dysonGrouped.agents.length, 1);
+  assert.equal(dysonGrouped.agents[0].agent_key, "codex:dyson-host");
+  assert.equal(dysonGrouped.agents[0].total_clouds, 101);
+  const trajectorySource = await text(`${base}/dyson-trajectory.mjs`);
+  assert.match(trajectorySource, /firstPhaseIsValid/);
+  assert.match(trajectorySource, /antipodalTarget/);
+  assert.doesNotMatch(trajectorySource, /secondPhaseIsValid/);
+  verifyDysonStateConvergence();
+  const workerSource = readFileSync(new URL("../worker/index.mjs", import.meta.url), "utf8");
+  assert.match(workerSource, /cache-control", "no-store"/);
+  assert.match(workerSource, /assetRequest\(request, "\/dyson"\)/);
+  assert.match(workerSource, /assetRequest\(request, "\/dyson-trajectory\.mjs"\)/);
+  assert.match(workerSource, /start: dateParam\(params\.get\("start"\)\)/);
+  assert.match(workerSource, /excluded\.last_event_at >= agent_state\.last_event_at/);
+  await post(`${base}/ingest`, {
+    event_id: "state-newer",
+    source_agent: "codex",
+    event_type: "Stop",
+    occurred_at: "2026-07-03T00:01:00.000Z",
+    host_id: "state-host",
+    workspace_id: "state-workspace",
+    session_id: "state-session",
+    agent_status: "done",
+  });
+  await post(`${base}/ingest`, {
+    event_id: "state-older",
+    source_agent: "codex",
+    event_type: "PreToolUse",
+    occurred_at: "2026-07-03T00:00:00.000Z",
+    host_id: "state-host",
+    workspace_id: "state-workspace",
+    session_id: "state-session",
+    agent_status: "tool_calling",
+  });
+  const stateAgent = (await get(`${base}/api/agents`)).agents.find((agent) => agent.host_id === "state-host");
+  assert.equal(stateAgent.summary.meta.agent_status, "done");
+  assert.equal(stateAgent.last_event_at, "2026-07-03T00:01:00.000Z");
+  const prepareWorkerSource = readFileSync(new URL("../scripts/prepare-worker.mjs", import.meta.url), "utf8");
+  assert.match(prepareWorkerSource, /dyson-trajectory\.mjs/);
 
   const events = await get(`${base}/api/events?limit=20`);
   const otelEvent = events.events.find((x) => x.source_surface === "otel" && x.source_agent === "claude-code");
@@ -351,6 +569,10 @@ try {
   const rangedEvents = await get(`${base}/api/events?start=2026-07-01T00:00:30.000Z&end=2026-07-01T00:01:30.000Z&limit=20`);
   assert.equal(rangedEvents.events.some((x) => x.event_id === "smoke-hook-1"), true);
   assert.equal(rangedEvents.events.some((x) => x.event_id === "smoke-1"), false);
+  const compactRangedEvents = await get(`${base}/api/events?start=1782864030&end=1782864090&limit=20&compact=1`);
+  assert.equal(compactRangedEvents.events.some((x) => x.event_id === "smoke-hook-1"), true);
+  assert.equal(compactRangedEvents.events.some((x) => x.event_id === "smoke-1"), false);
+  assert.equal("meta_json" in compactRangedEvents.events[0], false);
   const incrementalEvents = await get(`${base}/api/events?since=2026-07-01T00:00:30.000Z&limit=20`);
   assert.equal(incrementalEvents.events.some((x) => x.event_id === "smoke-hook-1"), true);
   assert.equal(incrementalEvents.events.some((x) => x.event_id === "smoke-1"), false);
@@ -364,6 +586,106 @@ try {
   await close(server);
   server.cultivagent.db.close();
   rmSync(dir, { recursive: true, force: true });
+}
+
+function verifyDysonTrajectories() {
+  const config = {
+    arcScale: 3.4,
+    cloudRadiusMin: 23,
+    cloudRadiusMax: 54,
+    orbitSpeedForRadius: (radius) => 0.06 * Math.pow(78 / radius, 1.5),
+    random01: dysonRandom,
+    tangentCos: Math.cos(Math.PI / 6),
+  };
+  const seen = new Set();
+  let total = 0;
+  for (let planetIndex = 0; planetIndex < 32; planetIndex += 1) {
+    for (let sample = 1; sample <= 32; sample += 1) {
+      const source = dysonPlanetAt(planetIndex, dysonRandom(sample * 97 + planetIndex) * 1200);
+      const seed = (sample * 7919 + planetIndex * 104729) >>> 0;
+      const trajectory = buildShotTrajectory(source, seed, 1234.5, config);
+      assert.ok(trajectory, `no valid trajectory for planet ${planetIndex}, sample ${sample}`);
+      const seedRadius = Math.hypot(trajectory.seed.x, trajectory.seed.z);
+      assert.ok(seedRadius >= 46 && seedRadius <= 54);
+      assert.ok(source.clone().setY(0).normalize().dot(trajectory.seed.clone().setY(0).normalize()) < -0.999999);
+      assert.ok(parabolaTangent(trajectory.coefficients, 1).setY(0).normalize().dot(tangentFor(trajectory.seed)) >= config.tangentCos);
+      assert.ok(firstPhaseIsValid(source, trajectory.seed, trajectory.coefficients, seedRadius, config.tangentCos));
+      assert.ok(parabolaPoint(source, trajectory.coefficients, 1).distanceTo(trajectory.seed) < 1e-6);
+      assert.equal("maneuver" in trajectory, false);
+      seen.add(`${trajectory.seed.x.toFixed(4)}:${trajectory.seed.y.toFixed(4)}:${trajectory.seed.z.toFixed(4)}`);
+      total += 1;
+    }
+  }
+  assert.ok(seen.size > total * 0.99, "shots must independently select seed points");
+}
+
+function verifyDysonStateConvergence() {
+  const event = {
+    event_id: "bounded-batch",
+    day: "2026-07-10",
+    occurred_at: "2026-07-10T00:00:00.000Z",
+    source_agent: "codex",
+    host_id: "host",
+    workspace_id: "workspace",
+    session_id: "session",
+    usage: { total_tokens: 100000 },
+    meta: { agent_status: "done" },
+  };
+  const firing = buildDysonState([event], [], { day: event.day, now: "2026-07-10T00:00:05.000Z", detail: true }).agents[0];
+  assert.equal(firing.total_clouds, 1000);
+  assert.equal(firing.current_batch.shot_count, 100);
+  assert.equal(firing.current_batch.finished_at, "2026-07-10T00:00:10.000Z");
+  assert.equal(firing.active_shots[0].cloud_value, 10);
+  assert.equal(firing.pending_clouds, 490);
+  const coasting = buildDysonState([event], [], { day: event.day, now: "2026-07-10T00:00:10.200Z", detail: true }).agents[0];
+  assert.equal(coasting.pending_clouds, 0);
+  assert.equal(coasting.current_batch.phase, "coasting");
+  const overlapping = buildDysonState(
+    [event, { ...event, event_id: "bounded-batch-2", occurred_at: "2026-07-10T00:00:11.000Z" }],
+    [],
+    { day: event.day, now: "2026-07-10T00:00:11.200Z", detail: true },
+  ).agents[0];
+  assert.equal(overlapping.current_batch.event_id, "bounded-batch-2");
+  assert.equal(overlapping.launch_state, "emitting");
+  const burstEvents = Array.from({ length: 10 }, (_, index) => ({
+    ...event,
+    event_id: `burst-${index}`,
+    occurred_at: `2026-07-10T00:00:0${index}.000Z`,
+  }));
+  const burst = buildDysonState(burstEvents, [], { day: event.day, now: "2026-07-10T00:00:10.200Z", detail: true }).agents[0];
+  assert.equal(burst.batches.length, 1);
+  assert.equal(burst.pending_clouds, 0);
+  assert.equal(burst.current_batch.phase, "coasting");
+  const settled = buildDysonState([event], [], { day: event.day, now: "2026-07-10T00:00:20.000Z", detail: true }).agents[0];
+  assert.equal(settled.launch_state, "settled");
+  assert.equal(settled.current_batch, null);
+  assert.equal(settled.settled_clouds, 1000);
+  const stale = buildDysonState(
+    [{ ...event, event_id: "stale", usage: { input_tokens: 100 }, meta: {} }],
+    [{
+      source_agent: "codex",
+      host_id: "host",
+      last_event_at: "2026-07-10T00:01:00.000Z",
+      status: "ok",
+      summary: { meta: { agent_status: "thinking" } },
+    }],
+    { day: event.day, now: "2026-07-10T00:10:00.000Z" },
+  ).agents[0];
+  assert.equal(stale.status, "idle");
+}
+
+function dysonPlanetAt(index, time) {
+  const radius = 78 + (index % 9) * 18 + Math.floor(index / 9) * 8;
+  const speed = 0.06 * Math.pow(78 / radius, 1.5);
+  const angle = index * 2.399963 + time * speed;
+  const inclination = THREE.MathUtils.degToRad([30, -30, 20, -20, 10, -10, 0][index % 7]);
+  const z = Math.sin(angle) * radius;
+  return new THREE.Vector3(Math.cos(angle) * radius, -z * Math.sin(inclination), z * Math.cos(inclination));
+}
+
+function dysonRandom(seed) {
+  const value = Math.sin(seed * 12.9898) * 43758.5453123;
+  return value - Math.floor(value);
 }
 
 function listen(server) {

@@ -15,13 +15,6 @@
         ]
       }
     ],
-    "MessageDisplay": [
-      {
-        "hooks": [
-          { "type": "command", "command": "node ${CLAUDE_PLUGIN_ROOT}/scripts/hook.mjs message_display", "timeout": 3 }
-        ]
-      }
-    ],
     "PreToolUse": [
       {
         "matcher": "*",
@@ -46,19 +39,12 @@
         ]
       }
     ],
-    "PostToolBatch": [
-      {
-        "hooks": [
-          { "type": "command", "command": "node ${CLAUDE_PLUGIN_ROOT}/scripts/hook.mjs post_tool_batch", "timeout": 10 }
-        ]
-      }
-    ],
     "Stop": [
       {
         "matcher": "",
         "hooks": [
           { "type": "command", "command": "node ${CLAUDE_PLUGIN_ROOT}/scripts/hook.mjs stop", "timeout": 10 },
-          { "type": "command", "command": "node ${CLAUDE_PLUGIN_ROOT}/scripts/session-collector.mjs --lookback-minutes 60 --batch-size 10", "timeout": 20 }
+          { "type": "command", "command": "node ${CLAUDE_PLUGIN_ROOT}/scripts/session-collector.mjs --delay-ms 3000 --lookback-minutes 60 --batch-size 10", "timeout": 25 }
         ]
       }
     ],

@@ -6,6 +6,7 @@ import {
   insertEvent,
   listAgents,
   listDaily,
+  listDysonState,
   listEvents,
   listRequestStats,
   listUsageLogs,
@@ -97,10 +98,17 @@ export function createCultivagentServer(options = {}) {
       if (req.method === "GET" && (url.pathname === "/" || url.pathname === "/index.html")) {
         return html(res, isAuthorized(req, token) ? dashboardHtml() : loginPageHtml(), cors);
       }
+      if (req.method === "GET" && (url.pathname === "/dyson" || url.pathname === "/dyson.html")) {
+        return html(res, isAuthorized(req, token) ? dysonHtml() : loginPageHtml());
+      }
 
       // 其余所有路径：token 非空时强制 auth（含 GET，堵住 /api/* 裸奔）
       if (!isAuthorized(req, token)) {
         return json(res, 401, { error: "unauthorized" }, cors);
+      }
+
+      if (req.method === "GET" && url.pathname === "/dyson-trajectory.mjs") {
+        return text(res, 200, dysonTrajectorySource(), "text/javascript; charset=utf-8");
       }
 
       if (req.method === "GET" && url.pathname === "/api/events") {
@@ -110,6 +118,9 @@ export function createCultivagentServer(options = {}) {
         return json(res, 200, { daily: listDaily(db, url.searchParams.get("day")) }, cors);
       }
       if (req.method === "GET" && url.pathname === "/api/agents") return json(res, 200, { agents: listAgents(db) }, cors);
+      if (req.method === "GET" && url.pathname === "/api/dyson/state") {
+        return json(res, 200, listDysonState(db, dysonFilters(url.searchParams)), cors);
+      }
       if (req.method === "GET" && url.pathname === "/api/request-stats") {
         return json(res, 200, listRequestStats(db, statsFilters(url.searchParams)), cors);
       }
@@ -223,7 +234,18 @@ function eventFilters(params) {
     end: dateParam(params.get("end")),
     since: dateParam(params.get("since")),
     limit: params.get("limit"),
+    compact: params.get("compact") === "1",
     order: ranged ? "asc" : "desc",
+  };
+}
+
+function dysonFilters(params) {
+  return {
+    day: dayParam(params.get("day")),
+    start: dateParam(params.get("start")),
+    end: dateParam(params.get("end")),
+    now: dateParam(params.get("now")),
+    detail: params.get("detail") === "1",
   };
 }
 
@@ -266,4 +288,16 @@ function html(res, body, extra = {}) {
 
 function dashboardHtml() {
   return readFileSync(new URL("./dashboard.html", import.meta.url), "utf8");
+}
+
+function dayParam(value) {
+  return /^\d{4}-\d{2}-\d{2}$/.test(value || "") ? value : undefined;
+}
+
+function dysonHtml() {
+  return readFileSync(new URL("./games/dyson.html", import.meta.url), "utf8");
+}
+
+function dysonTrajectorySource() {
+  return readFileSync(new URL("./games/dyson-trajectory.mjs", import.meta.url), "utf8");
 }
