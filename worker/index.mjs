@@ -89,19 +89,29 @@ async function handleRequest(request, env) {
 
   if (request.method === "GET" && (url.pathname === "/" || url.pathname === "/index.html")) {
     if (!(await isAuthorized(request, env))) return html(loginPageHtml(), cors);
-    const asset = await env.ASSETS.fetch(assetRequest(request, "/"));
-    return noStore(new Response(asset.body, { status: asset.status, headers: { ...asset.headers, ...SECURITY_HEADERS, ...cors } }));
+    const asset = await env.ASSETS.fetch(new Request("https://cv.jthewl.cc/index.html", { method: "GET" }));
+    const headers = new Headers(asset.headers);
+    headers.set("content-type", "text/html; charset=utf-8");
+    headers.set("cache-control", "no-store");
+    for (const [k, v] of Object.entries(SECURITY_HEADERS)) headers.set(k, v);
+    for (const [k, v] of Object.entries(cors)) headers.set(k, v);
+    return new Response(asset.body, { status: asset.status, headers });
   }
   if (request.method === "GET" && (url.pathname === "/dyson" || url.pathname === "/dyson.html")) {
     if (!(await isAuthorized(request, env))) return html(loginPageHtml(), cors);
-    const dysonAsset = await env.ASSETS.fetch(assetRequest(request, "/dyson"));
-    return noStore(new Response(dysonAsset.body, { status: dysonAsset.status, headers: { ...dysonAsset.headers, ...SECURITY_HEADERS, ...cors } }));
+    const dysonAsset = await env.ASSETS.fetch(new Request("https://cv.jthewl.cc/dyson.html", { method: "GET" }));
+    const dysonHeaders = new Headers(dysonAsset.headers);
+    dysonHeaders.set("content-type", "text/html; charset=utf-8");
+    dysonHeaders.set("cache-control", "no-store");
+    for (const [k, v] of Object.entries(SECURITY_HEADERS)) dysonHeaders.set(k, v);
+    for (const [k, v] of Object.entries(cors)) dysonHeaders.set(k, v);
+    return new Response(dysonAsset.body, { status: dysonAsset.status, headers: dysonHeaders });
   }
 
   if (!(await isAuthorized(request, env))) return json({ error: "unauthorized" }, 401, cors);
 
   if (request.method === "GET" && url.pathname === "/dyson-trajectory.mjs") {
-    return noStore(await env.ASSETS.fetch(assetRequest(request, "/dyson-trajectory.mjs")));
+    return noStore(await env.ASSETS.fetch(new Request("https://cv.jthewl.cc/dyson-trajectory.mjs", { method: "GET" })));
   }
 
   if (request.method === "GET" && url.pathname === "/api/events") {
@@ -924,7 +934,7 @@ function noStore(response) {
 function assetRequest(request, pathname) {
   const url = new URL(request.url);
   url.pathname = pathname;
-  return new Request(url, request);
+  return new Request(url, { method: "GET" });
 }
 
 function parseCookie(header) {
