@@ -11,6 +11,7 @@
     "start": "node ./bin/cultivagent.mjs",
     "smoke": "node ./test/smoke.mjs",
     "cli-smoke": "node ./scripts/cli-smoke.mjs",
+    "test": "node --test test/unit.test.mjs",
     "worker:prepare": "node ./scripts/prepare-worker.mjs",
     "worker:dev": "npm run worker:prepare && npx wrangler dev",
     "worker:deploy": "npm run worker:prepare && npx wrangler deploy",

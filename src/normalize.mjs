@@ -10,6 +10,87 @@ const KNOWN_AGENTS = new Set([
   "cultivagent",
 ]);
 
+// 字段长度上限，防止超长字符串占满数据库
+const MAX_FIELD_LEN = 512;
+const MAX_EVENT_TYPE_LEN = 256;
+const MAX_USAGE_VALUE = 1e15; // 1 千万亿，远超任何合理的 token 数
+
+/**
+ * 验证并清洗 normalize 之前的原始输入。
+ * 抛出 ValidationError 如果有严重问题。
+ * 不抛出的情况下保证返回安全的、截断后的值。
+ */
+export function validateInput(input = {}) {
+  if (input == null || typeof input !== "object" || Array.isArray(input)) {
+    throw new ValidationError("event must be an object");
+  }
+
+  // source_agent — 已知集合或默认
+  const agent = String(input.source_agent ?? "cultivagent").toLowerCase();
+  if (!KNOWN_AGENTS.has(agent)) {
+    // 不抛错，normalizeEvent 会处理为 'cultivagent'
+    // 但我们标记一下
+  }
+
+  // event_type — 限长，清洗
+  if (input.event_type != null) {
+    const et = String(input.event_type);
+    if (et.length > MAX_EVENT_TYPE_LEN) input.event_type = et.slice(0, MAX_EVENT_TYPE_LEN);
+  }
+
+  // usage 数值验证 — 非负有限数
+  const usage = input.usage;
+  if (usage != null && typeof usage === "object" && !Array.isArray(usage)) {
+    for (const key of Object.keys(usage)) {
+      const val = Number(usage[key]);
+      if (!Number.isFinite(val) || val < 0) {
+        delete usage[key];
+      } else if (val > MAX_USAGE_VALUE) {
+        usage[key] = MAX_USAGE_VALUE;
+      }
+    }
+  }
+
+  // duration_ms — 非负有限数
+  if (input.duration_ms != null) {
+    const d = Number(input.duration_ms);
+    if (!Number.isFinite(d) || d < 0) delete input.duration_ms;
+    else if (d > 864000000) input.duration_ms = 864000000; // 上限 10 天 (ms)
+  }
+
+  // 字符串字段截断
+  for (const key of ["session_id", "sessionId", "turn_id", "prompt_id", "agent_id", "agentId", "model", "model_id", "modelId", "provider", "workspace_id", "cwd", "host_id", "username", "user_name", "userName", "machine_name", "machineName", "status"]) {
+    if (input[key] != null && typeof input[key] === "string" && input[key].length > MAX_FIELD_LEN) {
+      input[key] = input[key].slice(0, MAX_FIELD_LEN);
+    }
+  }
+
+  // occurred_at 时间窗口验证 — 不接受未来 1 小时以后或过去 10 年以前
+  const occurredAt = input.occurred_at ?? input.timestamp ?? input.time;
+  if (occurredAt != null) {
+    const date = new Date(occurredAt);
+    if (Number.isFinite(date.getTime())) {
+      const now = Date.now();
+      const oneHourAhead = now + 60 * 60 * 1000;
+      const tenYearsAgo = now - 10 * 365 * 24 * 60 * 60 * 1000;
+      if (date.getTime() > oneHourAhead || date.getTime() < tenYearsAgo) {
+        delete input.occurred_at;
+        delete input.timestamp;
+        delete input.time;
+      }
+    }
+  }
+
+  return input;
+}
+
+export class ValidationError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = "ValidationError";
+  }
+}
+
 const TOKEN_KEYS = {
   input_tokens: ["input_tokens", "inputTokens", "prompt_tokens", "promptTokens", "input", "prompt"],
   output_tokens: ["output_tokens", "outputTokens", "completion_tokens", "completionTokens", "output", "completion"],

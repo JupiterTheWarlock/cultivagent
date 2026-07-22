@@ -59,24 +59,29 @@ async function readJson(req) {
 }
 
 function json(res, status, body, extraHeaders = {}) {
-  res.writeHead(status, { "content-type": "application/json; charset=utf-8", ...extraHeaders });
+  const SECURITY_HEADERS = {
+    "x-content-type-options": "nosniff",
+    "x-frame-options": "DENY",
+    "referrer-policy": "strict-origin-when-cross-origin",
+  };
+  res.writeHead(status, { "content-type": "application/json; charset=utf-8", ...SECURITY_HEADERS, ...extraHeaders });
   res.end(JSON.stringify(body));
 }
 
 // POST /api/login：验 token → 设 HttpOnly/Secure/SameSite=Lax cookie（30 天）
-export async function handleLogin(req, res, token) {
-  if (!token) return json(res, 200, { ok: true }); // 本地无 auth，无需登录
+export async function handleLogin(req, res, token, cors = {}) {
+  if (!token) return json(res, 200, { ok: true }, cors); // 本地无 auth，无需登录
   const body = await readJson(req);
-  if (!safeEq(body.token ?? "", token)) return json(res, 401, { error: "invalid token" });
+  if (!safeEq(body.token ?? "", token)) return json(res, 401, { error: "invalid token" }, cors);
   const cookie =
     `${COOKIE_NAME}=${encodeURIComponent(body.token)}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=${COOKIE_MAX_AGE}`;
-  return json(res, 200, { ok: true }, { "set-cookie": cookie });
+  return json(res, 200, { ok: true }, { ...cors, "set-cookie": cookie });
 }
 
 // POST /api/logout：清 cookie
-export function handleLogout(res) {
+export function handleLogout(res, cors = {}) {
   const cookie = `${COOKIE_NAME}=; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=0`;
-  return json(res, 200, { ok: true }, { "set-cookie": cookie });
+  return json(res, 200, { ok: true }, { ...cors, "set-cookie": cookie });
 }
 
 // 登录页：最简 form，POST /api/login，成功后 reload 进 dashboard

@@ -1,8 +1,52 @@
-import { normalizeEvent, normalizeOtelLogs, normalizeOtelMetrics } from "../src/normalize.mjs";
+import { normalizeEvent, normalizeOtelLogs, normalizeOtelMetrics, validateInput, ValidationError } from "../src/normalize.mjs";
 
 const COOKIE_NAME = "cultivagent_token";
 const COOKIE_MAX_AGE = 2592000;
 const MAX_JSON_BYTES = 1024 * 1024;
+
+// ── Rate Limiting (in-memory per-isolate sliding window) ──
+const rateLimitMap = new Map();
+const INGEST_LIMIT = 120; // per minute per IP
+const API_LIMIT = 600; // per minute per IP
+const RL_WINDOW_MS = 60_000;
+function checkRateLimit(ip, limit) {
+  const now = Date.now();
+  const entry = rateLimitMap.get(ip);
+  if (!entry || now - entry.resetAt > RL_WINDOW_MS) {
+    rateLimitMap.set(ip, { count: 1, resetAt: now + RL_WINDOW_MS });
+    return true;
+  }
+  if (entry.count >= limit) return false;
+  entry.count += 1;
+  return true;
+}
+// 定期清理过期条目
+let rlCleanupAt = Date.now() + RL_WINDOW_MS;
+function maybeCleanupRL(now) {
+  if (now > rlCleanupAt) {
+    for (const [k, v] of rateLimitMap) { if (now > v.resetAt) rateLimitMap.delete(k); }
+    rlCleanupAt = now + RL_WINDOW_MS;
+  }
+}
+
+// ── CORS ──
+function corsHeaders(origin, allowed) {
+  if (!allowed || allowed === "*") return { "access-control-allow-origin": "*" };
+  if (origin === allowed) return { "access-control-allow-origin": origin, "vary": "Origin" };
+  return {};
+}
+
+// ── Security Headers ──
+const SECURITY_HEADERS = {
+  "x-content-type-options": "nosniff",
+  "x-frame-options": "DENY",
+  "referrer-policy": "strict-origin-when-cross-origin",
+  "permissions-policy": "camera=(), microphone=(), geolocation=()",
+};
+
+function clientIP(request) {
+  return request.headers.get("cf-connecting-ip") ?? request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "unknown";
+}
 
 export default {
   async fetch(request, env) {
@@ -10,6 +54,7 @@ export default {
       return await handleRequest(request, env);
     } catch (error) {
       if (error instanceof SyntaxError) return json({ error: "invalid_json" }, 400);
+      if (error instanceof ValidationError) return json({ error: error.message }, 400);
       if (error instanceof HttpError) return json({ error: error.message }, error.status);
       console.error(JSON.stringify({ message: "worker_request_failed", error: error instanceof Error ? error.message : String(error) }));
       return json({ error: "internal_error" }, 500);
@@ -19,75 +64,95 @@ export default {
 
 async function handleRequest(request, env) {
   const url = new URL(request.url);
-  if (request.method === "OPTIONS") return new Response(null, { status: 204 });
+  const now = Date.now();
+  maybeCleanupRL(now);
+  const ip = clientIP(request);
+  const allowedOrigin = env.CULTIVAGENT_CORS_ORIGIN ?? "";
+  const origin = request.headers.get("origin") ?? "";
+  const cors = corsHeaders(origin, allowedOrigin);
 
-  if (request.method === "GET" && url.pathname === "/api/health") return json({ ok: true });
-  if (request.method === "POST" && url.pathname === "/api/login") return handleLogin(request, env);
-  if (request.method === "POST" && url.pathname === "/api/logout") return handleLogout();
+  if (request.method === "OPTIONS") {
+    return new Response(null, { status: 204, headers: { ...cors, "access-control-allow-methods": "GET, POST, OPTIONS", "access-control-allow-headers": "content-type, authorization, x-cultivagent-token", "access-control-max-age": "86400" } });
+  }
+
+  // Rate limiting
+  if (url.pathname === "/ingest" || url.pathname.startsWith("/otel/")) {
+    if (!checkRateLimit(ip, INGEST_LIMIT)) return json({ error: "rate_limited" }, 429, cors);
+  } else if (url.pathname.startsWith("/api/")) {
+    if (!checkRateLimit(ip, API_LIMIT)) return json({ error: "rate_limited" }, 429, cors);
+  }
+
+  if (request.method === "GET" && url.pathname === "/api/health") return json({ ok: true }, 200, cors);
+  if (request.method === "POST" && url.pathname === "/api/login") return handleLogin(request, env, cors);
+  if (request.method === "POST" && url.pathname === "/api/logout") return handleLogout(cors);
 
   if (request.method === "GET" && (url.pathname === "/" || url.pathname === "/index.html")) {
-    if (!(await isAuthorized(request, env))) return html(loginPageHtml());
-    return env.ASSETS.fetch(assetRequest(request, "/"));
+    if (!(await isAuthorized(request, env))) return html(loginPageHtml(), cors);
+    const asset = await env.ASSETS.fetch(assetRequest(request, "/"));
+    return new Response(asset.body, { status: asset.status, headers: { ...asset.headers, ...SECURITY_HEADERS, ...cors } });
   }
 
-  if (!(await isAuthorized(request, env))) return json({ error: "unauthorized" }, 401);
+  if (!(await isAuthorized(request, env))) return json({ error: "unauthorized" }, 401, cors);
 
   if (request.method === "GET" && url.pathname === "/api/events") {
-    return json({ events: await listEvents(env.DB, eventFilters(url.searchParams)) });
+    return json({ events: await listEvents(env.DB, eventFilters(url.searchParams)) }, 200, cors);
   }
   if (request.method === "GET" && url.pathname === "/api/daily") {
-    return json({ daily: await listDaily(env.DB, url.searchParams.get("day")) });
+    return json({ daily: await listDaily(env.DB, url.searchParams.get("day")) }, 200, cors);
   }
   if (request.method === "GET" && url.pathname === "/api/agents") {
-    return json({ agents: await listAgents(env.DB) });
+    return json({ agents: await listAgents(env.DB) }, 200, cors);
   }
   if (request.method === "GET" && url.pathname === "/api/request-stats") {
-    return json(await listRequestStats(env.DB, statsFilters(url.searchParams)));
+    return json(await listRequestStats(env.DB, statsFilters(url.searchParams)), 200, cors);
   }
   if (request.method === "GET" && url.pathname === "/api/usage/summary") {
-    return json({ summary: usageSummary(await listUsageEvents(env.DB, statsFilters(url.searchParams))) });
+    return json({ summary: usageSummary(await listUsageEvents(env.DB, statsFilters(url.searchParams))) }, 200, cors);
   }
   if (request.method === "GET" && url.pathname === "/api/usage/trends") {
     const filters = statsFilters(url.searchParams);
-    return json({ trends: usageTrend(await listUsageEvents(env.DB, filters), filters) });
+    return json({ trends: usageTrend(await listUsageEvents(env.DB, filters), filters) }, 200, cors);
   }
   if (request.method === "GET" && url.pathname === "/api/usage/providers") {
-    return json(await listUsageProviderStats(env.DB, statsFilters(url.searchParams)));
+    return json(await listUsageProviderStats(env.DB, statsFilters(url.searchParams)), 200, cors);
   }
   if (request.method === "GET" && url.pathname === "/api/usage/models") {
-    return json(await listUsageModelStats(env.DB, statsFilters(url.searchParams)));
+    return json(await listUsageModelStats(env.DB, statsFilters(url.searchParams)), 200, cors);
   }
   if (request.method === "GET" && url.pathname === "/api/usage/logs") {
-    return json(await listUsageLogs(env.DB, statsFilters(url.searchParams), url.searchParams.get("page"), url.searchParams.get("pageSize")));
+    return json(await listUsageLogs(env.DB, statsFilters(url.searchParams), url.searchParams.get("page"), url.searchParams.get("pageSize")), 200, cors);
   }
-  if (request.method === "GET" && url.pathname === "/api/pool") return json({ events: [] });
+  if (request.method === "GET" && url.pathname === "/api/pool") return json({ events: [] }, 200, cors);
 
   if (request.method === "POST" && url.pathname === "/api/reset") {
     await resetDatabase(env.DB);
-    return json({ ok: true });
+    return json({ ok: true }, 200, cors);
   }
   if (request.method === "POST" && url.pathname === "/ingest") {
     const body = await readJson(request);
-    return json(await saveEvents(env.DB, normalizeInputEvents(body)), 202);
+    return json(await saveEvents(env.DB, normalizeInputEvents(body)), 202, cors);
   }
   if (request.method === "POST" && url.pathname === "/otel/v1/logs") {
     const body = await readJson(request);
-    return json(await saveEvents(env.DB, normalizeOtelLogs(body)), 202);
+    return json(await saveEvents(env.DB, normalizeOtelLogs(body)), 202, cors);
   }
   if (request.method === "POST" && url.pathname === "/otel/v1/metrics") {
     const body = await readJson(request);
-    return json(await saveEvents(env.DB, normalizeOtelMetrics(body)), 202);
+    return json(await saveEvents(env.DB, normalizeOtelMetrics(body)), 202, cors);
   }
   if (request.method === "GET" && url.pathname === "/docs/install") {
-    return text("See https://github.com/JupiterTheWarlock/cultivagent/blob/main/docs/INSTALL.md\n", "text/markdown; charset=utf-8");
+    return text("See https://github.com/JupiterTheWarlock/cultivagent/blob/main/docs/INSTALL.md\n", "text/markdown; charset=utf-8", 200, cors);
   }
 
-  return json({ error: "not_found" }, 404);
+  return json({ error: "not_found" }, 404, cors);
 }
 
 function normalizeInputEvents(body) {
   const events = Array.isArray(body) ? body : Array.isArray(body?.events) ? body.events : [body];
-  return events.map((event) => normalizeEvent(event));
+  return events.map((event) => {
+    validateInput(event);
+    return normalizeEvent(event);
+  });
 }
 
 async function saveEvents(db, events) {
@@ -550,17 +615,17 @@ async function isAuthorized(request, env) {
   return false;
 }
 
-async function handleLogin(request, env) {
-  if (!env.CULTIVAGENT_TOKEN) return json({ ok: true });
+async function handleLogin(request, env, cors = {}) {
+  if (!env.CULTIVAGENT_TOKEN) return json({ ok: true }, 200, cors);
   const body = await readJson(request);
-  if (!(await safeEq(body.token ?? "", env.CULTIVAGENT_TOKEN))) return json({ error: "invalid token" }, 401);
+  if (!(await safeEq(body.token ?? "", env.CULTIVAGENT_TOKEN))) return json({ error: "invalid token" }, 401, cors);
   const cookie = `${COOKIE_NAME}=${encodeURIComponent(body.token)}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=${COOKIE_MAX_AGE}`;
-  return json({ ok: true }, 200, { "set-cookie": cookie });
+  return json({ ok: true }, 200, { ...cors, "set-cookie": cookie });
 }
 
-function handleLogout() {
+function handleLogout(cors = {}) {
   const cookie = `${COOKIE_NAME}=; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=0`;
-  return json({ ok: true }, 200, { "set-cookie": cookie });
+  return json({ ok: true }, 200, { ...cors, "set-cookie": cookie });
 }
 
 async function readJson(request) {
@@ -582,19 +647,19 @@ async function sha256(value) {
   return new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value)));
 }
 
-function json(body, status = 200, headers = {}) {
+function json(body, status = 200, extra = {}) {
   return new Response(JSON.stringify(body), {
     status,
-    headers: { "content-type": "application/json; charset=utf-8", ...headers },
+    headers: { "content-type": "application/json; charset=utf-8", ...SECURITY_HEADERS, ...extra },
   });
 }
 
-function text(body, type, status = 200) {
-  return new Response(body, { status, headers: { "content-type": type } });
+function text(body, type, status = 200, extra = {}) {
+  return new Response(body, { status, headers: { "content-type": type, ...SECURITY_HEADERS, ...extra } });
 }
 
-function html(body) {
-  return text(body, "text/html; charset=utf-8");
+function html(body, extra = {}) {
+  return text(body, "text/html; charset=utf-8", 200, extra);
 }
 
 function assetRequest(request, pathname) {
